@@ -110,7 +110,7 @@ body {
   <div id="view">
     <canvas id="c"></canvas>
     <div class="hud">
-      <span class="chip">旗 <b id="hFlags">0</b> / 5</span>
+      <span class="chip">サル <b id="hFlags">0</b> / 5</span>
       <span class="chip"><span id="hArrow">▲</span><b id="hFar">0</b> m</span>
       <span class="chip"><b id="hTime">0.00</b> 秒</span>
       <span class="chip"><b id="hSteps">0</b> 歩</span>
@@ -128,12 +128,13 @@ body {
   <div id="start" class="overlay">
     <div class="card">
       <h1>ゆびウォーク</h1>
-      <p>スマホを机に置いて、人差し指と中指を足のように動かします。広場を歩き回って、旗を5本集めるまでのタイムを計ります。</p>
+      <p>スマホを机に置いて、人差し指と中指を足のように動かします。広場を逃げ回るサルを5匹、ぜんぶ捕まえるまでのタイムを計ります。</p>
       <ul>
         <li><b>歩く</b>「左足」「右足」の枠に指を置いて、手前（画面の下のほう）へ引く。左右交互に。</li>
         <li><b>曲がる</b>ななめに引く。右ななめ手前に引くと左へ、左ななめ手前に引くと右へ曲がります（左下のボタンで逆にできます）。</li>
         <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。丸太をとびこえます。</li>
-        <li><b>旗の場所</b>上の ▲ がいちばん近い旗の方向、数字が距離です。</li>
+        <li><b>捕まえる</b>サルにさわれば捕まえられます。近づくと逃げますが、追い続けると疲れて遅くなります。柵に追いつめるのも手です。</li>
+        <li><b>サルの場所</b>上の ▲ がいちばん近いサルの方向、数字が距離です。</li>
       </ul>
       <p>パソコンでは F・J キーを交互に、A・D キーで曲がる、スペースでジャンプ。</p>
       <button id="btnStart" type="button">はじめる</button>
@@ -142,7 +143,7 @@ body {
 
   <div id="goal" class="overlay" hidden>
     <div class="card">
-      <h1>旗をぜんぶ集めた！</h1>
+      <h1>サルをぜんぶ捕まえた！</h1>
       <div class="big"><span id="gTime">0.00</span> 秒</div>
       <p id="gNote"></p>
       <button id="btnRetry" type="button">もう一度</button>
@@ -177,7 +178,11 @@ body {
   var JUMP_V = 4.6, GRAVITY = 14;
   var FIELD_R = 42;        // radius of the walkable field (m)
   var LOG_H = 0.4;         // height of the logs you must jump (m)
-  var FLAG_POS = [[6, -16], [-20, -26], [24, -4], [-12, 18], [16, 26]];
+  var MONKEY_POS = [[6, -16], [-20, -26], [24, -4], [-12, 18], [16, 26]];   // where each monkey starts
+  var MONKEY_SPEED = [2.0, 2.3, 2.6, 2.9, 3.2];   // top fleeing speed of each monkey (m/s); your own steady pace is about 3.5
+  var MONKEY_SEE = 9;      // a monkey starts fleeing when you are closer than this (m)
+  var MONKEY_TIRE = 5;     // seconds of fleeing until a monkey is fully tired (it then runs at 55% speed)
+  var CATCH_R = 1.2;       // touch distance that counts as a catch (m)
   var LOG_POS = [[3, -9], [-11, -19], [15, -9], [-6, 9], [10, 16], [-22, -8]];
 
   // ---------- scene ----------
@@ -219,7 +224,7 @@ body {
   for (i = 0; i < 70; i++) {
     var ta = rnd() * Math.PI * 2, tr = 5 + rnd() * (FIELD_R + 14), tx = Math.cos(ta) * tr, tz = Math.sin(ta) * tr, s = 0.8 + rnd() * 0.9;
     var leafC = rnd() > 0.5 ? 0x3f8f58 : 0x55a567;
-    if (near(tx, tz, FLAG_POS, 3.5) || near(tx, tz, LOG_POS, 3.5)) continue;
+    if (near(tx, tz, LOG_POS, 3.5)) continue;
     var t = new THREE.Group();
     var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
     var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(leafC)); leaf.position.y = 2; t.add(leaf);
@@ -227,15 +232,25 @@ body {
     trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3 });
   }
 
-  var flags = FLAG_POS.map(function (p) {
-    var g = new THREE.Group();
-    var pole = box(0.1, 3.2, 0.1, 0x1d2a44); pole.position.y = 1.6; g.add(pole);
-    var cloth = box(0.9, 0.6, 0.05, 0xf2603a); cloth.position.set(0.5, 2.8, 0); g.add(cloth);
-    var ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; g.add(ring);
-    g.position.set(p[0], 0, p[1]); scene.add(g);
-    return { x: p[0], z: p[1], g: g, got: false };
+  // monkeys: built facing +z, so rotation.y = dir makes them face the way they run
+  function ball(r, c) { return new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat(c)); }
+  var monkeys = MONKEY_POS.map(function (p, n) {
+    var g = new THREE.Group(), FUR = 0x8b5a2b, SKIN = 0xf0cfa0;
+    var body = box(0.42, 0.46, 0.34, FUR); body.position.y = 0.55; g.add(body);
+    var belly = box(0.26, 0.3, 0.05, SKIN); belly.position.set(0, 0.55, 0.16); g.add(belly);
+    var hd = ball(0.23, FUR); hd.position.y = 1.0; g.add(hd);
+    var face = ball(0.16, SKIN); face.position.set(0, 0.97, 0.12); g.add(face);
+    var e1 = ball(0.09, SKIN); e1.position.set(-0.24, 1.03, 0); g.add(e1);
+    var e2 = ball(0.09, SKIN); e2.position.set(0.24, 1.03, 0); g.add(e2);
+    var a1 = box(0.11, 0.5, 0.11, FUR); a1.position.set(-0.29, 0.5, 0.05); g.add(a1);
+    var a2 = a1.clone(); a2.position.x = 0.29; g.add(a2);
+    var l1 = box(0.13, 0.34, 0.13, FUR); l1.position.set(-0.12, 0.17, 0); g.add(l1);
+    var l2 = l1.clone(); l2.position.x = 0.12; g.add(l2);
+    var tail = box(0.07, 0.07, 0.6, FUR); tail.position.set(0, 0.5, -0.42); tail.rotation.x = 0.7; g.add(tail);
+    g.scale.setScalar(1.15); g.position.set(p[0], 0, p[1]); scene.add(g);
+    return { hx: p[0], hz: p[1], x: p[0], z: p[1], g: g, got: false, speed: MONKEY_SPEED[n], dir: 0, st: 1, wt: 0, walk: false, hop: 0, ph: n * 1.7 };
   });
+  window.__monkeys = monkeys;
 
   var logs = LOG_POS.map(function (p) {       // logs lie along the x axis, 3 m long
     var m = new THREE.Mesh(new THREE.CylinderGeometry(LOG_H / 2, LOG_H / 2, 3, 10), mat(0x8a6240));
@@ -292,7 +307,7 @@ body {
 
   function reset() {
     G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0;
-    flags.forEach(function (f) { f.got = false; f.g.visible = true; });
+    monkeys.forEach(function (m) { m.got = false; m.g.visible = true; m.x = m.hx; m.z = m.hz; m.st = 1; m.wt = 0; });
     lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
@@ -385,11 +400,11 @@ body {
   function finish() {
     G.state = 'goal'; G.running = false;
     var best = null;
-    try { best = parseFloat(localStorage.getItem('yubiwalk-flags-best')); } catch (err) {}
-    var note = G.steps + '歩で集めました。';
+    try { best = parseFloat(localStorage.getItem('yubiwalk-monkey-best')); } catch (err) {}
+    var note = G.steps + '歩で捕まえました。';
     if (!(best > 0) || G.time < best) {
       note += (best > 0) ? ' 自己ベスト更新です（これまで ' + best.toFixed(2) + ' 秒）。' : ' これが最初の記録です。';
-      try { localStorage.setItem('yubiwalk-flags-best', String(G.time)); } catch (err) {}
+      try { localStorage.setItem('yubiwalk-monkey-best', String(G.time)); } catch (err) {}
     } else note += ' 自己ベストは ' + best.toFixed(2) + ' 秒です。';
     $('gTime').textContent = G.time.toFixed(2); $('gNote').textContent = note; $('goal').hidden = false;
   }
@@ -429,20 +444,39 @@ body {
       }
       G.x = nx; G.z = nz;
 
-      flags.forEach(function (f) {
-        if (!f.got && Math.hypot(f.x - G.x, f.z - G.z) < 1.3) {
-          f.got = true; f.g.visible = false; G.got++;
-          if (G.got < flags.length) toast('旗を取った！ あと' + (flags.length - G.got) + '本');
+      monkeys.forEach(function (m) {
+        if (m.got) return;
+        var dx = m.x - G.x, dz = m.z - G.z, d = Math.hypot(dx, dz), sp = 0;
+        if (d < CATCH_R && G.running) {
+          m.got = true; m.g.visible = false; G.got++;
+          if (G.got < monkeys.length) toast('サルを捕まえた！ あと' + (monkeys.length - G.got) + '匹');
+          return;
         }
+        if (d < MONKEY_SEE) {                          // flee: straight away from you, weaving a little, slowing as it tires
+          m.dir = Math.atan2(dx, dz) + Math.sin(now / 400 + m.ph) * 0.5;
+          m.st = Math.max(0, m.st - dt / MONKEY_TIRE);
+          sp = m.speed * (0.55 + 0.45 * m.st);
+        } else {                                       // otherwise rest and stroll about
+          m.st = Math.min(1, m.st + dt / 4);
+          m.wt -= dt;
+          if (m.wt <= 0) { m.wt = 1 + Math.random() * 3; m.dir = Math.random() * Math.PI * 2; m.walk = Math.random() > 0.4; }
+          sp = m.walk ? 0.8 : 0;
+        }
+        var mx = m.x + Math.sin(m.dir) * sp * dt, mz = m.z + Math.cos(m.dir) * sp * dt;
+        var mr = Math.hypot(mx, mz), lim = FIELD_R - 1;
+        if (mr > lim) { mx *= lim / mr; mz *= lim / mr; }   // the fence stops monkeys too, so you can corner them
+        m.x = mx; m.z = mz; m.hop += dt * sp * 4;
+        m.g.position.set(m.x, sp > 0 ? Math.abs(Math.sin(m.hop)) * 0.25 : 0, m.z);
+        m.g.rotation.y = m.dir;
       });
-      if (G.got >= flags.length) finish();
+      if (G.got >= monkeys.length) finish();
     } else if (G.state === 'goal') G.v -= G.v * 3 * dt;
 
-    // nearest remaining flag: arrow and distance
+    // nearest remaining monkey: arrow and distance
     var bestD = Infinity, bf = null;
-    flags.forEach(function (f) { if (!f.got) { var d = Math.hypot(f.x - G.x, f.z - G.z); if (d < bestD) { bestD = d; bf = f; } } f.g.rotation.y += dt * 1.2; });
+    monkeys.forEach(function (f) { if (!f.got) { var d = Math.hypot(f.x - G.x, f.z - G.z); if (d < bestD) { bestD = d; bf = f; } } });
     if (bf) {
-      var rel = Math.atan2(-(bf.x - G.x), -(bf.z - G.z)) - G.h;   // positive = flag is to the left
+      var rel = Math.atan2(-(bf.x - G.x), -(bf.z - G.z)) - G.h;   // positive = monkey is to the left
       hArrow.style.transform = 'rotate(' + (-rel).toFixed(3) + 'rad)'; hFar.textContent = Math.round(bestD);
     } else hFar.textContent = '0';
 
