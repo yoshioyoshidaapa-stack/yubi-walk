@@ -99,16 +99,16 @@ body {
     <div class="speed"><i id="hSpeed"></i></div>
     <div id="toast"></div>
   </div>
-  <div id="pad"><div class="pad-label"><b>ここを2本の指でトコトコ</b><br>交互にタップで歩く／両指をそろえて離すとジャンプ</div></div>
+  <div id="pad"><div class="pad-label"><b>ここを2本の指でトコトコ</b><br>指を置いて手前に引くと進む／両指をそろえて離すとジャンプ</div></div>
 
   <div id="start" class="overlay">
     <div class="card">
       <h1>ゆびウォーク</h1>
       <p>スマホを机に置いて、人差し指と中指を足のように動かします。100m先のゴールまでのタイムを計ります。</p>
       <ul>
-        <li><b>歩く</b>2本の指で交互にタップ。速くたたくほど速く進みます。</li>
+        <li><b>歩く</b>指を置いて、手前（画面の下のほう）へ引く。2本の指で交互に。長く・速く引くほど速く進みます。</li>
         <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。</li>
-        <li><b>注意</b>1本の指で同じ場所を連打しても進みません。</li>
+        <li><b>注意</b>タップしただけでは進みません。1本の指で同じ場所から引き続けても進みません。</li>
       </ul>
       <p>パソコンでは F キーと J キーを交互に、スペースでジャンプ。</p>
       <button id="btnStart" type="button">はじめる</button>
@@ -139,10 +139,12 @@ body {
 
   // ---------- tuning (the "feel" lives here) ----------
   var GOAL = 100;          // metres
-  var KICK = 1.1;          // speed gained per step (m/s)
+  var KICK = 1.1;          // speed gained per key press on a keyboard (m/s)
+  var DRAG_GAIN = 0.012;   // speed gained per pixel a finger is dragged backward (m/s per px)
+  var STEP_PX = 24;        // px of backward drag before a touch counts as a step
   var FRICTION = 1.6;      // how fast speed fades when you stop stepping
   var VMAX = 8;            // top speed (m/s)
-  var MIN_SEP = 36;        // px a tap must be away from the previous one to count as "the other foot"
+  var MIN_SEP = 36;        // px a touch must start away from the previous one to count as "the other foot"
   var JUMP_V = 4.6, GRAVITY = 14;
   var HURDLES = [20, 40, 60, 80];
   var HURDLE_H = 0.45;
@@ -232,10 +234,10 @@ body {
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { toastEl.classList.remove('on'); }, 700);
   }
 
+  function push(dv) { if (G.y === 0) G.v = Math.min(VMAX, G.v + dv); }
   function step() {
     if (!G.running) G.running = true;
     G.steps++; G.side = -G.side; G.bounce = 1;
-    if (G.y === 0) G.v = Math.min(VMAX, G.v + KICK);
   }
   function jump() {
     if (G.y > 0) return;
@@ -257,18 +259,26 @@ body {
     if (G.state !== 'play' || e.target.closest('button')) return;
     if (downs[e.pointerId]) return;
     var now = performance.now(), others = nDown;
-    downs[e.pointerId] = true; nDown++;
+    // a touch only plants the foot; the push comes from dragging it backward (toward the bottom of the screen)
+    downs[e.pointerId] = { x0: e.clientX, y0: e.clientY, ly: e.clientY, pushed: 0, ok: null };
+    nDown++;
     if (nDown === 2) pairT = now;
-    if (others >= 1 && now - lastDownT < 70) {          // both fingers landed together: standing, not a step
-      lastDownT = now; ripple(e.clientX, e.clientY, true); return;
+    ripple(e.clientX, e.clientY, true);
+  });
+  window.addEventListener('pointermove', function (e) {
+    var d = downs[e.pointerId];
+    if (!d || G.state !== 'play') return;
+    var dy = e.clientY - d.ly; d.ly = e.clientY;
+    if (dy <= 0) return;                                // forward or sideways movement does nothing
+    if (d.ok === null) {
+      d.pushed += dy;
+      if (d.pushed < STEP_PX) return;
+      var far = Math.hypot(d.x0 - lastStep.x, d.y0 - lastStep.y) > MIN_SEP;
+      d.ok = lastStep.t === 0 || far;                   // same finger from the same spot again does not count
+      if (d.ok) { step(); lastStep = { x: d.x0, y: d.y0, t: performance.now(), key: '' }; dy = d.pushed; }
+      else { ripple(e.clientX, e.clientY, false); toast('2本の指で交互に！'); }
     }
-    lastDownT = now;
-    var far = Math.hypot(e.clientX - lastStep.x, e.clientY - lastStep.y) > MIN_SEP;
-    if (lastStep.t === 0 || far) {
-      step(); lastStep = { x: e.clientX, y: e.clientY, t: now, key: '' }; ripple(e.clientX, e.clientY, true);
-    } else {
-      ripple(e.clientX, e.clientY, false); toast('2本の指で交互に！');
-    }
+    if (d.ok) push(dy * DRAG_GAIN);
   });
   function up(e) {
     if (!downs[e.pointerId]) return;
@@ -291,7 +301,7 @@ body {
     var k = e.key.toLowerCase();
     if (k === ' ') { e.preventDefault(); jump(); return; }
     if (k !== 'f' && k !== 'j') return;
-    if (lastStep.key !== k) { step(); lastStep = { x: -999, y: -999, t: performance.now(), key: k }; }
+    if (lastStep.key !== k) { step(); push(KICK); lastStep = { x: -999, y: -999, t: performance.now(), key: k }; }
     else toast('FとJを交互に！');
   });
 
