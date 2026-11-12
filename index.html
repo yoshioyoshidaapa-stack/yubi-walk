@@ -15,6 +15,7 @@
   --accent: #f2603a;
   --pad: #1d2a44;
   --pad-mark: #7f8db0;
+  --pad-hi: #32456f;
   --font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
   color-scheme: light;
 }
@@ -30,11 +31,21 @@ body {
 #c { display: block; width: 100%; height: 100%; }
 #pad {
   position: relative; flex: 0 0 42%; background: var(--pad);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: stretch; gap: 8px; padding-block: 8px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
-.pad-label { color: var(--pad-mark); font-size: 15px; text-align: center; line-height: 1.7; pointer-events: none; }
-.pad-label b { color: var(--panel); font-weight: 800; }
+.zone {
+  flex: 1 1 0; min-width: 0; border: 2px dashed var(--pad-mark); border-radius: 18px;
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 12px;
+  color: var(--pad-mark); font-weight: 800; font-size: 18px; opacity: .55;
+  transition: opacity .12s, background-color .12s;
+}
+.zone.next { opacity: 1; border-style: solid; border-color: var(--panel); color: var(--panel); }
+.zone.on { background: var(--pad-hi); }
+.pad-label {
+  position: absolute; left: 0; right: 0; bottom: 16px; padding-inline: 24px;
+  color: var(--pad-mark); font-size: 13px; text-align: center; line-height: 1.6; pointer-events: none;
+}
 @media (orientation: landscape) {
   #app { flex-direction: row; }
   #pad { flex-basis: 42%; }
@@ -99,16 +110,20 @@ body {
     <div class="speed"><i id="hSpeed"></i></div>
     <div id="toast"></div>
   </div>
-  <div id="pad"><div class="pad-label"><b>ここを2本の指でトコトコ</b><br>指を置いて手前に引くと進む／両指をそろえて離すとジャンプ</div></div>
+  <div id="pad">
+    <div class="zone next" id="zL">左足</div>
+    <div class="zone next" id="zR">右足</div>
+    <div class="pad-label">左右交互に、指を置いて手前に引く／両指をそろえて離すとジャンプ</div>
+  </div>
 
   <div id="start" class="overlay">
     <div class="card">
       <h1>ゆびウォーク</h1>
       <p>スマホを机に置いて、人差し指と中指を足のように動かします。100m先のゴールまでのタイムを計ります。</p>
       <ul>
-        <li><b>歩く</b>指を置いて、手前（画面の下のほう）へ引く。2本の指で交互に。長く・速く引くほど速く進みます。</li>
+        <li><b>歩く</b>「左足」「右足」の枠に指を置いて、手前（画面の下のほう）へ引く。左右交互に。長く・速く引くほど速く進みます。</li>
         <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。</li>
-        <li><b>注意</b>タップしただけでは進みません。1本の指で同じ場所から引き続けても進みません。</li>
+        <li><b>注意</b>タップしただけでは進みません。同じ側の足を2回続けても進みません。明るい枠が次に出す足です。</li>
       </ul>
       <p>パソコンでは F キーと J キーを交互に、スペースでジャンプ。</p>
       <button id="btnStart" type="button">はじめる</button>
@@ -144,7 +159,6 @@ body {
   var STEP_PX = 24;        // px of backward drag before a touch counts as a step
   var FRICTION = 1.6;      // how fast speed fades when you stop stepping
   var VMAX = 8;            // top speed (m/s)
-  var MIN_SEP = 36;        // px a touch must start away from the previous one to count as "the other foot"
   var JUMP_V = 4.6, GRAVITY = 14;
   var HURDLES = [20, 40, 60, 80];
   var HURDLE_H = 0.45;
@@ -225,7 +239,7 @@ body {
   function reset() {
     G.dist = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0;
     hurdles.forEach(function (h) { h.done = false; h.fall = 0; h.g.rotation.x = 0; });
-    lastStep = { x: 0, y: 0, t: 0, key: '' }; downs = {}; nDown = 0; firstUpT = 0;
+    lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
   var toastEl = $('toast'), toastTimer = 0;
@@ -235,9 +249,10 @@ body {
   }
 
   function push(dv) { if (G.y === 0) G.v = Math.min(VMAX, G.v + dv); }
-  function step() {
+  function step(foot) {
     if (!G.running) G.running = true;
-    G.steps++; G.side = -G.side; G.bounce = 1;
+    G.steps++; G.side = foot === 'L' ? -1 : 1; G.bounce = 1;   // the pushing leg swings back
+    lastStep.foot = foot; paint();
   }
   function jump() {
     if (G.y > 0) return;
@@ -246,7 +261,14 @@ body {
 
   // ---------- finger input ----------
   var downs = {}, nDown = 0, lastDownT = 0, pairT = 0, firstUpT = 0;
-  var lastStep = { x: 0, y: 0, t: 0, key: '' };
+  var lastStep = { foot: '' };                          // which foot pushed last: 'L', 'R' or '' (none yet)
+  var pad = $('pad'), zL = $('zL'), zR = $('zR');
+  function paint() {                                    // light up touched zones; bright border = foot to use next
+    var l = false, r = false;
+    for (var id in downs) { if (downs[id].foot === 'L') l = true; else r = true; }
+    zL.classList.toggle('on', l); zR.classList.toggle('on', r);
+    zL.classList.toggle('next', lastStep.foot !== 'L'); zR.classList.toggle('next', lastStep.foot !== 'R');
+  }
 
   function ripple(x, y, ok) {
     var r = app.getBoundingClientRect(), el = document.createElement('div');
@@ -258,10 +280,12 @@ body {
   app.addEventListener('pointerdown', function (e) {
     if (G.state !== 'play' || e.target.closest('button')) return;
     if (downs[e.pointerId]) return;
-    var now = performance.now(), others = nDown;
+    var now = performance.now(), pr = pad.getBoundingClientRect();
+    if (e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom) return;   // only the footpad counts
+    var mid = (zL.getBoundingClientRect().right + zR.getBoundingClientRect().left) / 2;
     // a touch only plants the foot; the push comes from dragging it backward (toward the bottom of the screen)
-    downs[e.pointerId] = { x0: e.clientX, y0: e.clientY, ly: e.clientY, pushed: 0, ok: null };
-    nDown++;
+    downs[e.pointerId] = { foot: e.clientX < mid ? 'L' : 'R', ly: e.clientY, pushed: 0, ok: null };
+    nDown++; paint();
     if (nDown === 2) pairT = now;
     ripple(e.clientX, e.clientY, true);
   });
@@ -273,17 +297,16 @@ body {
     if (d.ok === null) {
       d.pushed += dy;
       if (d.pushed < STEP_PX) return;
-      var far = Math.hypot(d.x0 - lastStep.x, d.y0 - lastStep.y) > MIN_SEP;
-      d.ok = lastStep.t === 0 || far;                   // same finger from the same spot again does not count
-      if (d.ok) { step(); lastStep = { x: d.x0, y: d.y0, t: performance.now(), key: '' }; dy = d.pushed; }
-      else { ripple(e.clientX, e.clientY, false); toast('2本の指で交互に！'); }
+      d.ok = lastStep.foot !== d.foot;                  // the same foot twice in a row does not count
+      if (d.ok) { step(d.foot); dy = d.pushed; }
+      else { ripple(e.clientX, e.clientY, false); toast(d.foot === 'L' ? '次は右足！' : '次は左足！'); }
     }
     if (d.ok) push(dy * DRAG_GAIN);
   });
   function up(e) {
     if (!downs[e.pointerId]) return;
     var now = performance.now(), had = nDown;
-    delete downs[e.pointerId]; nDown--;
+    delete downs[e.pointerId]; nDown--; paint();
     if (had === 2) firstUpT = (now - pairT > 50) ? now : 0;
     else if (had === 1) {
       if (G.state === 'play' && firstUpT && now - firstUpT < 110) jump();
@@ -301,7 +324,8 @@ body {
     var k = e.key.toLowerCase();
     if (k === ' ') { e.preventDefault(); jump(); return; }
     if (k !== 'f' && k !== 'j') return;
-    if (lastStep.key !== k) { step(); push(KICK); lastStep = { x: -999, y: -999, t: performance.now(), key: k }; }
+    var foot = k === 'f' ? 'L' : 'R';
+    if (lastStep.foot !== foot) { step(foot); push(KICK); }
     else toast('FとJを交互に！');
   });
 
