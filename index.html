@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>ゆびウォーク</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap">
+<style>
+/* Layout: one screen. 3D view on top (or left when the phone is sideways), a dark "footpad" where the fingers walk. */
+:root {
+  --sky: #bfe3f2;
+  --ink: #1d2a44;
+  --ink-soft: #55627d;
+  --panel: #fffdf6;
+  --accent: #f2603a;
+  --pad: #1d2a44;
+  --pad-mark: #7f8db0;
+  --font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+  color-scheme: light;
+}
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--sky); color: var(--ink); font-family: var(--font); font-weight: 500;
+  overflow: hidden; overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+#app { position: relative; height: 100%; display: flex; flex-direction: column; touch-action: none; }
+#view { position: relative; flex: 1 1 0; min-height: 0; min-width: 0; background: var(--sky); }
+#c { display: block; width: 100%; height: 100%; }
+#pad {
+  position: relative; flex: 0 0 42%; background: var(--pad);
+  display: flex; align-items: center; justify-content: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.pad-label { color: var(--pad-mark); font-size: 15px; text-align: center; line-height: 1.7; pointer-events: none; }
+.pad-label b { color: var(--panel); font-weight: 800; }
+@media (orientation: landscape) {
+  #app { flex-direction: row; }
+  #pad { flex-basis: 42%; }
+}
+.hud {
+  position: absolute; inset: 0 0 auto 0; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.chip {
+  background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 12px;
+  font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.chip b { font-weight: 800; font-size: 16px; }
+.speed { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(29,42,68,.18); pointer-events: none; }
+.speed i { display: block; height: 100%; width: 0; background: var(--accent); }
+#toast {
+  position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
+  background: var(--ink); color: var(--panel); font-weight: 800; font-size: 18px;
+  padding: 6px 16px; border-radius: 999px; opacity: 0; transition: opacity .15s; pointer-events: none; white-space: nowrap;
+}
+#toast.on { opacity: 1; }
+.tap {
+  position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%;
+  border: 3px solid var(--panel); pointer-events: none; animation: tap .45s ease-out forwards;
+}
+.tap.bad { border-color: var(--pad-mark); border-style: dashed; }
+@keyframes tap { from { transform: scale(.5); opacity: .9; } to { transform: scale(1.3); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tap { animation-duration: .01s; } }
+.overlay {
+  position: absolute; inset: 0; background: rgba(29,42,68,.72); display: flex; align-items: center; justify-content: center;
+  padding-block: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.card {
+  background: var(--panel); color: var(--ink); border-radius: 20px; padding: 22px 22px 20px; max-width: 360px; width: 100%;
+  max-height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 12px;
+}
+.card h1 { margin: 0; font-size: 26px; font-weight: 800; text-wrap: balance; }
+.card p { margin: 0; font-size: 14px; line-height: 1.7; color: var(--ink-soft); }
+.card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.6; }
+.card li b { font-weight: 800; color: var(--accent); margin-right: 6px; }
+.big { font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.card button {
+  font: inherit; font-weight: 800; font-size: 18px; color: var(--panel); background: var(--accent);
+  border: 0; border-radius: 999px; padding: 12px 20px; cursor: pointer; touch-action: manipulation;
+}
+.card button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+</style>
+<style>[hidden] { display: none !important; }</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div class="hud">
+      <span class="chip"><b id="hDist">0.0</b> / 100 m</span>
+      <span class="chip"><b id="hTime">0.00</b> 秒</span>
+      <span class="chip"><b id="hSteps">0</b> 歩</span>
+    </div>
+    <div class="speed"><i id="hSpeed"></i></div>
+    <div id="toast"></div>
+  </div>
+  <div id="pad"><div class="pad-label"><b>ここを2本の指でトコトコ</b><br>交互にタップで歩く／両指をそろえて離すとジャンプ</div></div>
+
+  <div id="start" class="overlay">
+    <div class="card">
+      <h1>ゆびウォーク</h1>
+      <p>スマホを机に置いて、人差し指と中指を足のように動かします。100m先のゴールまでのタイムを計ります。</p>
+      <ul>
+        <li><b>歩く</b>2本の指で交互にタップ。速くたたくほど速く進みます。</li>
+        <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。</li>
+        <li><b>注意</b>1本の指で同じ場所を連打しても進みません。</li>
+      </ul>
+      <p>パソコンでは F キーと J キーを交互に、スペースでジャンプ。</p>
+      <button id="btnStart" type="button">はじめる</button>
+    </div>
+  </div>
+
+  <div id="goal" class="overlay" hidden>
+    <div class="card">
+      <h1>ゴール！</h1>
+      <div class="big"><span id="gTime">0.00</span> 秒</div>
+      <p id="gNote"></p>
+      <button id="btnRetry" type="button">もう一度</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var app = $('app'), view = $('view'), canvas = $('c');
+  if (!window.THREE) {
+    $('start').querySelector('p').textContent = '3D表示の部品を読み込めませんでした。通信状態を確認して、ページを開き直してください。';
+    $('btnStart').hidden = true;
+    return;
+  }
+
+  // ---------- tuning (the "feel" lives here) ----------
+  var GOAL = 100;          // metres
+  var KICK = 1.1;          // speed gained per step (m/s)
+  var FRICTION = 1.6;      // how fast speed fades when you stop stepping
+  var VMAX = 8;            // top speed (m/s)
+  var MIN_SEP = 36;        // px a tap must be away from the previous one to count as "the other foot"
+  var JUMP_V = 4.6, GRAVITY = 14;
+  var HURDLES = [20, 40, 60, 80];
+  var HURDLE_H = 0.45;
+
+  // ---------- scene ----------
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xbfe3f2);
+  scene.fog = new THREE.Fog(0xbfe3f2, 28, 75);
+  var camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x6f9a5c, 0.95));
+  var sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(4, 10, 6); scene.add(sun);
+
+  function mat(c) { return new THREE.MeshLambertMaterial({ color: c }); }
+  function box(w, h, d, c) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); }
+
+  var ground = new THREE.Mesh(new THREE.PlaneGeometry(120, 260), mat(0x7fbf6a));
+  ground.rotation.x = -Math.PI / 2; ground.position.z = -60; scene.add(ground);
+  var road = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 260), mat(0xe9dcc0));
+  road.rotation.x = -Math.PI / 2; road.position.set(0, 0.01, -60); scene.add(road);
+  for (var i = -5; i < 70; i++) {                      // dashes so speed is visible
+    var dash = box(0.14, 0.02, 0.9, 0xcbb994); dash.position.set(-1.9, 0.02, -i * 2); scene.add(dash);
+    var dash2 = dash.clone(); dash2.position.x = 1.9; scene.add(dash2);
+  }
+  var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+  for (i = 0; i < 46; i++) {                           // trees
+    var t = new THREE.Group(), s = 0.8 + rnd() * 0.9;
+    var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
+    var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(rnd() > 0.5 ? 0x3f8f58 : 0x55a567)); leaf.position.y = 2; t.add(leaf);
+    t.scale.setScalar(s);
+    t.position.set((rnd() > 0.5 ? 1 : -1) * (4 + rnd() * 12), 0, 8 - rnd() * 135);
+    scene.add(t);
+  }
+  var startLine = box(4.4, 0.02, 0.3, 0xffffff); startLine.position.set(0, 0.03, 0); scene.add(startLine);
+  var gate = new THREE.Group();
+  var p1 = box(0.25, 3.4, 0.25, 0x1d2a44); p1.position.set(-2.4, 1.7, 0); gate.add(p1);
+  var p2 = p1.clone(); p2.position.x = 2.4; gate.add(p2);
+  var banner = box(5.05, 0.7, 0.12, 0xf2603a); banner.position.y = 3.2; gate.add(banner);
+  var gl = box(4.4, 0.02, 0.5, 0xffffff); gl.position.y = 0.03; gate.add(gl);
+  gate.position.z = -GOAL; scene.add(gate);
+
+  var hurdles = HURDLES.map(function (d) {
+    var g = new THREE.Group();
+    var a = box(0.1, HURDLE_H, 0.1, 0x1d2a44); a.position.set(-1.5, HURDLE_H / 2, 0); g.add(a);
+    var b = a.clone(); b.position.x = 1.5; g.add(b);
+    var bar = box(3.1, 0.12, 0.08, 0xffffff); bar.position.y = HURDLE_H; g.add(bar);
+    var bar2 = box(0.9, 0.125, 0.085, 0xf2603a); bar2.position.y = HURDLE_H; g.add(bar2);
+    g.position.z = -d; scene.add(g);
+    return { d: d, g: g, done: false, fall: 0 };
+  });
+
+  // character: pivots at hips/shoulders so limbs swing
+  var hero = new THREE.Group();
+  var torso = box(0.5, 0.6, 0.3, 0xf2603a); torso.position.y = 1.05; hero.add(torso);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat(0xf3c9a5)); head.position.y = 1.6; hero.add(head);
+  var cap = box(0.5, 0.1, 0.5, 0x1d2a44); cap.position.y = 1.8; hero.add(cap);
+  function limb(x, y, len, w, c) {
+    var g = new THREE.Group(); g.position.set(x, y, 0);
+    var m = box(w, len, w, c); m.position.y = -len / 2; g.add(m); hero.add(g); return g;
+  }
+  var legL = limb(-0.14, 0.76, 0.76, 0.18, 0x26365e), legR = limb(0.14, 0.76, 0.76, 0.18, 0x26365e);
+  var armL = limb(-0.33, 1.3, 0.55, 0.13, 0xf3c9a5), armR = limb(0.33, 1.3, 0.55, 0.13, 0xf3c9a5);
+  scene.add(hero);
+  var shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 20), new THREE.MeshBasicMaterial({ color: 0x1d2a44, transparent: true, opacity: 0.25 }));
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.04; scene.add(shadow);
+
+  function resize() {
+    var w = view.clientWidth, h = view.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // ---------- game state ----------
+  var G = { state: 'ready', dist: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0 };
+  function reset() {
+    G.dist = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0;
+    hurdles.forEach(function (h) { h.done = false; h.fall = 0; h.g.rotation.x = 0; });
+    lastStep = { x: 0, y: 0, t: 0, key: '' }; downs = {}; nDown = 0; firstUpT = 0;
+  }
+
+  var toastEl = $('toast'), toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg; toastEl.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { toastEl.classList.remove('on'); }, 700);
+  }
+
+  function step() {
+    if (!G.running) G.running = true;
+    G.steps++; G.side = -G.side; G.bounce = 1;
+    if (G.y === 0) G.v = Math.min(VMAX, G.v + KICK);
+  }
+  function jump() {
+    if (G.y > 0) return;
+    G.vy = JUMP_V; G.y = 0.0001; toast('ジャンプ！');
+  }
+
+  // ---------- finger input ----------
+  var downs = {}, nDown = 0, lastDownT = 0, pairT = 0, firstUpT = 0;
+  var lastStep = { x: 0, y: 0, t: 0, key: '' };
+
+  function ripple(x, y, ok) {
+    var r = app.getBoundingClientRect(), el = document.createElement('div');
+    el.className = ok ? 'tap' : 'tap bad';
+    el.style.left = (x - r.left) + 'px'; el.style.top = (y - r.top) + 'px';
+    app.appendChild(el); setTimeout(function () { el.remove(); }, 500);
+  }
+
+  app.addEventListener('pointerdown', function (e) {
+    if (G.state !== 'play' || e.target.closest('button')) return;
+    if (downs[e.pointerId]) return;
+    var now = performance.now(), others = nDown;
+    downs[e.pointerId] = true; nDown++;
+    if (nDown === 2) pairT = now;
+    if (others >= 1 && now - lastDownT < 70) {          // both fingers landed together: standing, not a step
+      lastDownT = now; ripple(e.clientX, e.clientY, true); return;
+    }
+    lastDownT = now;
+    var far = Math.hypot(e.clientX - lastStep.x, e.clientY - lastStep.y) > MIN_SEP;
+    if (lastStep.t === 0 || far) {
+      step(); lastStep = { x: e.clientX, y: e.clientY, t: now, key: '' }; ripple(e.clientX, e.clientY, true);
+    } else {
+      ripple(e.clientX, e.clientY, false); toast('2本の指で交互に！');
+    }
+  });
+  function up(e) {
+    if (!downs[e.pointerId]) return;
+    var now = performance.now(), had = nDown;
+    delete downs[e.pointerId]; nDown--;
+    if (had === 2) firstUpT = (now - pairT > 50) ? now : 0;
+    else if (had === 1) {
+      if (G.state === 'play' && firstUpT && now - firstUpT < 110) jump();
+      firstUpT = 0;
+    }
+  }
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+  app.addEventListener('touchstart', function (e) { if (!e.target.closest('button')) e.preventDefault(); }, { passive: false });
+  app.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+  app.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  window.addEventListener('keydown', function (e) {
+    if (G.state !== 'play' || e.repeat) return;
+    var k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); jump(); return; }
+    if (k !== 'f' && k !== 'j') return;
+    if (lastStep.key !== k) { step(); lastStep = { x: -999, y: -999, t: performance.now(), key: k }; }
+    else toast('FとJを交互に！');
+  });
+
+  // ---------- screens ----------
+  function begin() { reset(); G.state = 'play'; $('start').hidden = true; $('goal').hidden = true; }
+  $('btnStart').addEventListener('click', begin);
+  $('btnRetry').addEventListener('click', begin);
+
+  function finish() {
+    G.state = 'goal'; G.running = false;
+    var best = null;
+    try { best = parseFloat(localStorage.getItem('yubiwalk-best')); } catch (err) {}
+    var note = G.steps + '歩でゴールしました。';
+    if (!(best > 0) || G.time < best) {
+      note += (best > 0) ? ' 自己ベスト更新です（これまで ' + best.toFixed(2) + ' 秒）。' : ' これが最初の記録です。';
+      try { localStorage.setItem('yubiwalk-best', String(G.time)); } catch (err) {}
+    } else note += ' 自己ベストは ' + best.toFixed(2) + ' 秒です。';
+    $('gTime').textContent = G.time.toFixed(2); $('gNote').textContent = note; $('goal').hidden = false;
+  }
+
+  // ---------- loop ----------
+  var hDist = $('hDist'), hTime = $('hTime'), hSteps = $('hSteps'), hSpeed = $('hSpeed');
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+
+    if (G.state === 'play') {
+      if (G.running) G.time += dt;
+      if (G.y > 0) {                                   // in the air: keep speed, fall
+        G.vy -= GRAVITY * dt; G.y += G.vy * dt;
+        if (G.y <= 0) { G.y = 0; G.vy = 0; G.bounce = 1; }
+      } else G.v -= G.v * FRICTION * dt;
+      if (G.v < 0.02) G.v = 0;
+      var prev = G.dist; G.dist += G.v * dt;
+      hurdles.forEach(function (h) {
+        if (!h.done && prev < h.d && G.dist >= h.d) {
+          h.done = true;
+          if (G.y < HURDLE_H) { h.fall = 1; G.v *= 0.2; toast('つまずいた！'); }
+        }
+      });
+      if (G.dist >= GOAL) { G.dist = GOAL; finish(); }
+    } else if (G.state === 'goal') G.v -= G.v * 3 * dt;
+
+    hurdles.forEach(function (h) { if (h.fall && h.g.rotation.x > -1.45) h.g.rotation.x -= dt * 7; });
+
+    // pose
+    var moving = G.v > 0.15, amp = moving ? 0.3 + 0.6 * Math.min(1, G.v / 5) : 0;
+    var target = G.side * amp, k = Math.min(1, dt * 18);
+    if (G.y > 0) { legL.rotation.x += (0.9 - legL.rotation.x) * k; legR.rotation.x += (0.5 - legR.rotation.x) * k; }
+    else { legL.rotation.x += (target - legL.rotation.x) * k; legR.rotation.x += (-target - legR.rotation.x) * k; }
+    armL.rotation.x += (-target * 0.8 - armL.rotation.x) * k; armR.rotation.x += (target * 0.8 - armR.rotation.x) * k;
+    G.bounce = Math.max(0, G.bounce - dt * 6);
+    hero.position.set(0, G.y + 0.05 * G.bounce, -G.dist);
+    hero.rotation.x = -0.05 * Math.min(1, G.v / 5) * 3;
+    shadow.position.z = -G.dist; shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
+
+    camera.position.set(0, 3.3, -G.dist + 4.4);
+    camera.lookAt(0, 0.9, -G.dist - 3.5);
+
+    hDist.textContent = G.dist.toFixed(1); hTime.textContent = G.time.toFixed(2); hSteps.textContent = G.steps;
+    hSpeed.style.width = (100 * G.v / VMAX).toFixed(1) + '%';
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  window.__game = G;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
