@@ -6,7 +6,7 @@
 <title>ゆびウォーク</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap">
 <style>
-/* Layout: one screen. 3D view on top (or left when the phone is sideways), a dark "footpad" where the fingers walk. */
+/* Layout: one screen. 3D view on top (or left when the phone is sideways), a dark "footpad" split into a left-foot and a right-foot zone. */
 :root {
   --sky: #bfe3f2;
   --ink: #1d2a44;
@@ -60,6 +60,13 @@ body {
   font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .chip b { font-weight: 800; font-size: 16px; }
+#hArrow { display: inline-block; color: var(--accent); font-size: 15px; margin-right: 4px; }
+#btnSteer {
+  position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 16px;
+  font: inherit; font-size: 13px; font-weight: 800; color: var(--ink); background: var(--panel);
+  border: 2px solid var(--ink); border-radius: 999px; padding: 6px 12px; cursor: pointer; touch-action: manipulation;
+}
+#btnSteer:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .speed { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(29,42,68,.18); pointer-events: none; }
 .speed i { display: block; height: 100%; width: 0; background: var(--accent); }
 #toast {
@@ -103,36 +110,39 @@ body {
   <div id="view">
     <canvas id="c"></canvas>
     <div class="hud">
-      <span class="chip"><b id="hDist">0.0</b> / 100 m</span>
+      <span class="chip">旗 <b id="hFlags">0</b> / 5</span>
+      <span class="chip"><span id="hArrow">▲</span><b id="hFar">0</b> m</span>
       <span class="chip"><b id="hTime">0.00</b> 秒</span>
       <span class="chip"><b id="hSteps">0</b> 歩</span>
     </div>
+    <button id="btnSteer" type="button">曲がり方: 蹴った逆へ</button>
     <div class="speed"><i id="hSpeed"></i></div>
     <div id="toast"></div>
   </div>
   <div id="pad">
     <div class="zone next" id="zL">左足</div>
     <div class="zone next" id="zR">右足</div>
-    <div class="pad-label">左右交互に、指を置いて手前に引く／両指をそろえて離すとジャンプ</div>
+    <div class="pad-label">左右交互に手前へ引く／ななめに引くと曲がる／両指をそろえて離すとジャンプ</div>
   </div>
 
   <div id="start" class="overlay">
     <div class="card">
       <h1>ゆびウォーク</h1>
-      <p>スマホを机に置いて、人差し指と中指を足のように動かします。100m先のゴールまでのタイムを計ります。</p>
+      <p>スマホを机に置いて、人差し指と中指を足のように動かします。広場を歩き回って、旗を5本集めるまでのタイムを計ります。</p>
       <ul>
-        <li><b>歩く</b>「左足」「右足」の枠に指を置いて、手前（画面の下のほう）へ引く。左右交互に。長く・速く引くほど速く進みます。</li>
-        <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。</li>
-        <li><b>注意</b>タップしただけでは進みません。同じ側の足を2回続けても進みません。明るい枠が次に出す足です。</li>
+        <li><b>歩く</b>「左足」「右足」の枠に指を置いて、手前（画面の下のほう）へ引く。左右交互に。</li>
+        <li><b>曲がる</b>ななめに引く。右ななめ手前に引くと左へ、左ななめ手前に引くと右へ曲がります（左下のボタンで逆にできます）。</li>
+        <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。丸太をとびこえます。</li>
+        <li><b>旗の場所</b>上の ▲ がいちばん近い旗の方向、数字が距離です。</li>
       </ul>
-      <p>パソコンでは F キーと J キーを交互に、スペースでジャンプ。</p>
+      <p>パソコンでは F・J キーを交互に、A・D キーで曲がる、スペースでジャンプ。</p>
       <button id="btnStart" type="button">はじめる</button>
     </div>
   </div>
 
   <div id="goal" class="overlay" hidden>
     <div class="card">
-      <h1>ゴール！</h1>
+      <h1>旗をぜんぶ集めた！</h1>
       <div class="big"><span id="gTime">0.00</span> 秒</div>
       <p id="gNote"></p>
       <button id="btnRetry" type="button">もう一度</button>
@@ -146,69 +156,91 @@ body {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var app = $('app'), view = $('view'), canvas = $('c');
-  if (!window.THREE) {
-    $('start').querySelector('p').textContent = '3D表示の部品を読み込めませんでした。通信状態を確認して、ページを開き直してください。';
-    $('btnStart').hidden = true;
-    return;
+  function fail(msg) {
+    $('start').hidden = false; $('goal').hidden = true;
+    var c = $('start').querySelector('.card');
+    c.innerHTML = '<h1>うまく動きませんでした</h1><p></p><p>この画面の文字をそのまま伝えてください。</p>';
+    c.querySelector('p').textContent = msg;
   }
+  window.addEventListener('error', function (e) { fail('エラー: ' + (e.message || '不明') + ' (行 ' + (e.lineno || '?') + ')'); });
+  if (!window.THREE) { fail('3D表示の部品を読み込めませんでした。通信状態を確認して、ページを開き直してください。'); return; }
 
   // ---------- tuning (the "feel" lives here) ----------
-  var GOAL = 100;          // metres
   var KICK = 1.1;          // speed gained per key press on a keyboard (m/s)
   var DRAG_GAIN = 0.012;   // speed gained per pixel a finger is dragged backward (m/s per px)
   var STEP_PX = 24;        // px of backward drag before a touch counts as a step
+  var TURN_GAIN = 0.006;   // radians turned per pixel of sideways drag (after the dead zone)
+  var DEAD = 0.35;         // sideways drag up to this fraction of the backward drag still counts as "straight"
+  var KEY_TURN = 1.8;      // radians per second when turning with the keyboard
   var FRICTION = 1.6;      // how fast speed fades when you stop stepping
   var VMAX = 8;            // top speed (m/s)
   var JUMP_V = 4.6, GRAVITY = 14;
-  var HURDLES = [20, 40, 60, 80];
-  var HURDLE_H = 0.45;
+  var FIELD_R = 42;        // radius of the walkable field (m)
+  var LOG_H = 0.4;         // height of the logs you must jump (m)
+  var FLAG_POS = [[6, -16], [-20, -26], [24, -4], [-12, 18], [16, 26]];
+  var LOG_POS = [[3, -9], [-11, -19], [15, -9], [-6, 9], [10, 16], [-22, -8]];
 
   // ---------- scene ----------
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  var renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true }); }
+  catch (err) { fail('この画面では3D表示(WebGL)が使えませんでした: ' + (err && err.message ? err.message : err)); return; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   var scene = new THREE.Scene();
   scene.background = new THREE.Color(0xbfe3f2);
-  scene.fog = new THREE.Fog(0xbfe3f2, 28, 75);
+  scene.fog = new THREE.Fog(0xbfe3f2, 30, 85);
   var camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x6f9a5c, 0.95));
   var sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(4, 10, 6); scene.add(sun);
 
   function mat(c) { return new THREE.MeshLambertMaterial({ color: c }); }
   function box(w, h, d, c) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); }
-
-  var ground = new THREE.Mesh(new THREE.PlaneGeometry(120, 260), mat(0x7fbf6a));
-  ground.rotation.x = -Math.PI / 2; ground.position.z = -60; scene.add(ground);
-  var road = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 260), mat(0xe9dcc0));
-  road.rotation.x = -Math.PI / 2; road.position.set(0, 0.01, -60); scene.add(road);
-  for (var i = -5; i < 70; i++) {                      // dashes so speed is visible
-    var dash = box(0.14, 0.02, 0.9, 0xcbb994); dash.position.set(-1.9, 0.02, -i * 2); scene.add(dash);
-    var dash2 = dash.clone(); dash2.position.x = 1.9; scene.add(dash2);
-  }
   var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
-  for (i = 0; i < 46; i++) {                           // trees
-    var t = new THREE.Group(), s = 0.8 + rnd() * 0.9;
-    var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
-    var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(rnd() > 0.5 ? 0x3f8f58 : 0x55a567)); leaf.position.y = 2; t.add(leaf);
-    t.scale.setScalar(s);
-    t.position.set((rnd() > 0.5 ? 1 : -1) * (4 + rnd() * 12), 0, 8 - rnd() * 135);
-    scene.add(t);
-  }
-  var startLine = box(4.4, 0.02, 0.3, 0xffffff); startLine.position.set(0, 0.03, 0); scene.add(startLine);
-  var gate = new THREE.Group();
-  var p1 = box(0.25, 3.4, 0.25, 0x1d2a44); p1.position.set(-2.4, 1.7, 0); gate.add(p1);
-  var p2 = p1.clone(); p2.position.x = 2.4; gate.add(p2);
-  var banner = box(5.05, 0.7, 0.12, 0xf2603a); banner.position.y = 3.2; gate.add(banner);
-  var gl = box(4.4, 0.02, 0.5, 0xffffff); gl.position.y = 0.03; gate.add(gl);
-  gate.position.z = -GOAL; scene.add(gate);
 
-  var hurdles = HURDLES.map(function (d) {
+  var ground = new THREE.Mesh(new THREE.CircleGeometry(160, 48), mat(0x7fbf6a));
+  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+
+  // grass tufts: without marks on the ground you cannot see that you are moving
+  var tufts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.04, 0.5), mat(0x6aae58), 520);
+  var m4 = new THREE.Matrix4(), i;
+  for (i = 0; i < 520; i++) {
+    var a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * (FIELD_R + 6);
+    m4.makeRotationY(rnd() * 3); m4.setPosition(Math.cos(a) * r, 0.02, Math.sin(a) * r); tufts.setMatrixAt(i, m4);
+  }
+  scene.add(tufts);
+
+  // fence posts mark the edge of the field
+  for (i = 0; i < 72; i++) {
+    var fa = i / 72 * Math.PI * 2, post = box(0.2, 1, 0.2, 0x8a6240);
+    post.position.set(Math.cos(fa) * (FIELD_R + 0.8), 0.5, Math.sin(fa) * (FIELD_R + 0.8)); scene.add(post);
+  }
+
+  function near(x, z, list, d) { return list.some(function (p) { return Math.hypot(p[0] - x, p[1] - z) < d; }); }
+  var trees = [];
+  for (i = 0; i < 70; i++) {
+    var ta = rnd() * Math.PI * 2, tr = 5 + rnd() * (FIELD_R + 14), tx = Math.cos(ta) * tr, tz = Math.sin(ta) * tr, s = 0.8 + rnd() * 0.9;
+    var leafC = rnd() > 0.5 ? 0x3f8f58 : 0x55a567;
+    if (near(tx, tz, FLAG_POS, 3.5) || near(tx, tz, LOG_POS, 3.5)) continue;
+    var t = new THREE.Group();
+    var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
+    var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(leafC)); leaf.position.y = 2; t.add(leaf);
+    t.scale.setScalar(s); t.position.set(tx, 0, tz); scene.add(t);
+    trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3 });
+  }
+
+  var flags = FLAG_POS.map(function (p) {
     var g = new THREE.Group();
-    var a = box(0.1, HURDLE_H, 0.1, 0x1d2a44); a.position.set(-1.5, HURDLE_H / 2, 0); g.add(a);
-    var b = a.clone(); b.position.x = 1.5; g.add(b);
-    var bar = box(3.1, 0.12, 0.08, 0xffffff); bar.position.y = HURDLE_H; g.add(bar);
-    var bar2 = box(0.9, 0.125, 0.085, 0xf2603a); bar2.position.y = HURDLE_H; g.add(bar2);
-    g.position.z = -d; scene.add(g);
-    return { d: d, g: g, done: false, fall: 0 };
+    var pole = box(0.1, 3.2, 0.1, 0x1d2a44); pole.position.y = 1.6; g.add(pole);
+    var cloth = box(0.9, 0.6, 0.05, 0xf2603a); cloth.position.set(0.5, 2.8, 0); g.add(cloth);
+    var ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; g.add(ring);
+    g.position.set(p[0], 0, p[1]); scene.add(g);
+    return { x: p[0], z: p[1], g: g, got: false };
+  });
+
+  var logs = LOG_POS.map(function (p) {       // logs lie along the x axis, 3 m long
+    var m = new THREE.Mesh(new THREE.CylinderGeometry(LOG_H / 2, LOG_H / 2, 3, 10), mat(0x8a6240));
+    m.rotation.z = Math.PI / 2; m.position.set(p[0], LOG_H / 2, p[1]); scene.add(m);
+    return { x: p[0], z: p[1] };
   });
 
   // character: pivots at hips/shoulders so limbs swing
@@ -216,6 +248,7 @@ body {
   var torso = box(0.5, 0.6, 0.3, 0xf2603a); torso.position.y = 1.05; hero.add(torso);
   var head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat(0xf3c9a5)); head.position.y = 1.6; hero.add(head);
   var cap = box(0.5, 0.1, 0.5, 0x1d2a44); cap.position.y = 1.8; hero.add(cap);
+  var brim = box(0.4, 0.06, 0.25, 0x1d2a44); brim.position.set(0, 1.77, -0.33); hero.add(brim);
   function limb(x, y, len, w, c) {
     var g = new THREE.Group(); g.position.set(x, y, 0);
     var m = box(w, len, w, c); m.position.y = -len / 2; g.add(m); hero.add(g); return g;
@@ -235,10 +268,31 @@ body {
   window.addEventListener('resize', resize); resize();
 
   // ---------- game state ----------
-  var G = { state: 'ready', dist: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0 };
+  // h = heading in radians (0 faces "into" the screen at the start, positive = turned left); ch = camera heading, which follows h
+  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0 };
+  var steer = 1;           // +1: dragging right turns left ("opposite of the kick"); -1: dragging right turns right
+  try { if (localStorage.getItem('yubiwalk-steer') === 'same') steer = -1; } catch (err) {}
+  var btnSteer = $('btnSteer');
+  function steerLabel() { btnSteer.textContent = steer === 1 ? '曲がり方: 蹴った逆へ' : '曲がり方: 引いた側へ'; }
+  steerLabel();
+  btnSteer.addEventListener('click', function () {
+    steer = -steer; steerLabel();
+    try { localStorage.setItem('yubiwalk-steer', steer === 1 ? 'opposite' : 'same'); } catch (err) {}
+  });
+
+  var downs = {}, nDown = 0, pairT = 0, firstUpT = 0, keys = {};
+  var lastStep = { foot: '' };                          // which foot pushed last: 'L', 'R' or '' (none yet)
+  var pad = $('pad'), zL = $('zL'), zR = $('zR');
+  function paint() {                                    // light up touched zones; bright border = foot to use next
+    var l = false, r = false;
+    for (var id in downs) { if (downs[id].foot === 'L') l = true; else r = true; }
+    zL.classList.toggle('on', l); zR.classList.toggle('on', r);
+    zL.classList.toggle('next', lastStep.foot !== 'L'); zR.classList.toggle('next', lastStep.foot !== 'R');
+  }
+
   function reset() {
-    G.dist = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0;
-    hurdles.forEach(function (h) { h.done = false; h.fall = 0; h.g.rotation.x = 0; });
+    G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0;
+    flags.forEach(function (f) { f.got = false; f.g.visible = true; });
     lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
@@ -260,16 +314,6 @@ body {
   }
 
   // ---------- finger input ----------
-  var downs = {}, nDown = 0, lastDownT = 0, pairT = 0, firstUpT = 0;
-  var lastStep = { foot: '' };                          // which foot pushed last: 'L', 'R' or '' (none yet)
-  var pad = $('pad'), zL = $('zL'), zR = $('zR');
-  function paint() {                                    // light up touched zones; bright border = foot to use next
-    var l = false, r = false;
-    for (var id in downs) { if (downs[id].foot === 'L') l = true; else r = true; }
-    zL.classList.toggle('on', l); zR.classList.toggle('on', r);
-    zL.classList.toggle('next', lastStep.foot !== 'L'); zR.classList.toggle('next', lastStep.foot !== 'R');
-  }
-
   function ripple(x, y, ok) {
     var r = app.getBoundingClientRect(), el = document.createElement('div');
     el.className = ok ? 'tap' : 'tap bad';
@@ -284,7 +328,7 @@ body {
     if (e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom) return;   // only the footpad counts
     var mid = (zL.getBoundingClientRect().right + zR.getBoundingClientRect().left) / 2;
     // a touch only plants the foot; the push comes from dragging it backward (toward the bottom of the screen)
-    downs[e.pointerId] = { foot: e.clientX < mid ? 'L' : 'R', ly: e.clientY, pushed: 0, ok: null };
+    downs[e.pointerId] = { foot: e.clientX < mid ? 'L' : 'R', lx: e.clientX, ly: e.clientY, pushed: 0, side: 0, ok: null };
     nDown++; paint();
     if (nDown === 2) pairT = now;
     ripple(e.clientX, e.clientY, true);
@@ -292,16 +336,19 @@ body {
   window.addEventListener('pointermove', function (e) {
     var d = downs[e.pointerId];
     if (!d || G.state !== 'play') return;
-    var dy = e.clientY - d.ly; d.ly = e.clientY;
-    if (dy <= 0) return;                                // forward or sideways movement does nothing
+    var dx = e.clientX - d.lx, back = Math.max(0, e.clientY - d.ly);   // only backward movement pushes
+    d.lx = e.clientX; d.ly = e.clientY;
     if (d.ok === null) {
-      d.pushed += dy;
+      d.pushed += back; d.side += dx;
       if (d.pushed < STEP_PX) return;
       d.ok = lastStep.foot !== d.foot;                  // the same foot twice in a row does not count
-      if (d.ok) { step(d.foot); dy = d.pushed; }
+      if (d.ok) { step(d.foot); back = d.pushed; dx = d.side; }
       else { ripple(e.clientX, e.clientY, false); toast(d.foot === 'L' ? '次は右足！' : '次は左足！'); }
     }
-    if (d.ok) push(dy * DRAG_GAIN);
+    if (!d.ok) return;
+    push(back * DRAG_GAIN);
+    var dead = back * DEAD, eff = dx > dead ? dx - dead : (dx < -dead ? dx + dead : 0);   // nearly straight pulls do not turn
+    G.h += steer * eff * TURN_GAIN;
   });
   function up(e) {
     if (!downs[e.pointerId]) return;
@@ -320,14 +367,15 @@ body {
   app.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   window.addEventListener('keydown', function (e) {
+    var k = e.key.toLowerCase(); keys[k] = true;
     if (G.state !== 'play' || e.repeat) return;
-    var k = e.key.toLowerCase();
     if (k === ' ') { e.preventDefault(); jump(); return; }
     if (k !== 'f' && k !== 'j') return;
     var foot = k === 'f' ? 'L' : 'R';
     if (lastStep.foot !== foot) { step(foot); push(KICK); }
     else toast('FとJを交互に！');
   });
+  window.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
 
   // ---------- screens ----------
   function begin() { reset(); G.state = 'play'; $('start').hidden = true; $('goal').hidden = true; }
@@ -337,39 +385,66 @@ body {
   function finish() {
     G.state = 'goal'; G.running = false;
     var best = null;
-    try { best = parseFloat(localStorage.getItem('yubiwalk-best')); } catch (err) {}
-    var note = G.steps + '歩でゴールしました。';
+    try { best = parseFloat(localStorage.getItem('yubiwalk-flags-best')); } catch (err) {}
+    var note = G.steps + '歩で集めました。';
     if (!(best > 0) || G.time < best) {
       note += (best > 0) ? ' 自己ベスト更新です（これまで ' + best.toFixed(2) + ' 秒）。' : ' これが最初の記録です。';
-      try { localStorage.setItem('yubiwalk-best', String(G.time)); } catch (err) {}
+      try { localStorage.setItem('yubiwalk-flags-best', String(G.time)); } catch (err) {}
     } else note += ' 自己ベストは ' + best.toFixed(2) + ' 秒です。';
     $('gTime').textContent = G.time.toFixed(2); $('gNote').textContent = note; $('goal').hidden = false;
   }
 
   // ---------- loop ----------
-  var hDist = $('hDist'), hTime = $('hTime'), hSteps = $('hSteps'), hSpeed = $('hSpeed');
+  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSteps = $('hSteps'), hSpeed = $('hSpeed');
   var last = performance.now();
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
 
     if (G.state === 'play') {
       if (G.running) G.time += dt;
+      if (keys.a || keys.arrowleft) G.h += KEY_TURN * dt;
+      if (keys.d || keys.arrowright) G.h -= KEY_TURN * dt;
       if (G.y > 0) {                                   // in the air: keep speed, fall
         G.vy -= GRAVITY * dt; G.y += G.vy * dt;
         if (G.y <= 0) { G.y = 0; G.vy = 0; G.bounce = 1; }
       } else G.v -= G.v * FRICTION * dt;
       if (G.v < 0.02) G.v = 0;
-      var prev = G.dist; G.dist += G.v * dt;
-      hurdles.forEach(function (h) {
-        if (!h.done && prev < h.d && G.dist >= h.d) {
-          h.done = true;
-          if (G.y < HURDLE_H) { h.fall = 1; G.v *= 0.2; toast('つまずいた！'); }
+
+      var fx = -Math.sin(G.h), fz = -Math.cos(G.h);    // forward direction
+      var nx = G.x + fx * G.v * dt, nz = G.z + fz * G.v * dt;
+
+      logs.forEach(function (l) {                      // crossing a log on the ground trips you
+        if ((G.z - l.z) * (nz - l.z) < 0 && Math.abs(nx - l.x) < 1.5 && G.y < LOG_H && now - G.tripT > 600) {
+          G.v *= 0.2; G.tripT = now; toast('つまずいた！');
         }
       });
-      if (G.dist >= GOAL) { G.dist = GOAL; finish(); }
+      trees.forEach(function (t) {                     // trees are solid
+        var dx = nx - t.x, dz = nz - t.z, d = Math.hypot(dx, dz);
+        if (d < t.r && d > 0) { nx = t.x + dx / d * t.r; nz = t.z + dz / d * t.r; G.v *= 0.9; }
+      });
+      var rr = Math.hypot(nx, nz);
+      if (rr > FIELD_R) {
+        nx *= FIELD_R / rr; nz *= FIELD_R / rr;
+        if (now - G.edgeT > 1500) { G.edgeT = now; toast('ここから先は行けません'); }
+      }
+      G.x = nx; G.z = nz;
+
+      flags.forEach(function (f) {
+        if (!f.got && Math.hypot(f.x - G.x, f.z - G.z) < 1.3) {
+          f.got = true; f.g.visible = false; G.got++;
+          if (G.got < flags.length) toast('旗を取った！ あと' + (flags.length - G.got) + '本');
+        }
+      });
+      if (G.got >= flags.length) finish();
     } else if (G.state === 'goal') G.v -= G.v * 3 * dt;
 
-    hurdles.forEach(function (h) { if (h.fall && h.g.rotation.x > -1.45) h.g.rotation.x -= dt * 7; });
+    // nearest remaining flag: arrow and distance
+    var bestD = Infinity, bf = null;
+    flags.forEach(function (f) { if (!f.got) { var d = Math.hypot(f.x - G.x, f.z - G.z); if (d < bestD) { bestD = d; bf = f; } } f.g.rotation.y += dt * 1.2; });
+    if (bf) {
+      var rel = Math.atan2(-(bf.x - G.x), -(bf.z - G.z)) - G.h;   // positive = flag is to the left
+      hArrow.style.transform = 'rotate(' + (-rel).toFixed(3) + 'rad)'; hFar.textContent = Math.round(bestD);
+    } else hFar.textContent = '0';
 
     // pose
     var moving = G.v > 0.15, amp = moving ? 0.3 + 0.6 * Math.min(1, G.v / 5) : 0;
@@ -378,14 +453,17 @@ body {
     else { legL.rotation.x += (target - legL.rotation.x) * k; legR.rotation.x += (-target - legR.rotation.x) * k; }
     armL.rotation.x += (-target * 0.8 - armL.rotation.x) * k; armR.rotation.x += (target * 0.8 - armR.rotation.x) * k;
     G.bounce = Math.max(0, G.bounce - dt * 6);
-    hero.position.set(0, G.y + 0.05 * G.bounce, -G.dist);
-    hero.rotation.x = -0.05 * Math.min(1, G.v / 5) * 3;
-    shadow.position.z = -G.dist; shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
+    hero.position.set(G.x, G.y + 0.05 * G.bounce, G.z);
+    hero.rotation.y = G.h;
+    shadow.position.set(G.x, 0.04, G.z); shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
 
-    camera.position.set(0, 3.3, -G.dist + 4.4);
-    camera.lookAt(0, 0.9, -G.dist - 3.5);
+    // camera sits behind and above, and swings round a little later than the character turns
+    G.ch += (G.h - G.ch) * Math.min(1, dt * 5);
+    var cx = -Math.sin(G.ch), cz = -Math.cos(G.ch);
+    camera.position.set(G.x - cx * 4.4, 3.3, G.z - cz * 4.4);
+    camera.lookAt(G.x + cx * 3.5, 0.9, G.z + cz * 3.5);
 
-    hDist.textContent = G.dist.toFixed(1); hTime.textContent = G.time.toFixed(2); hSteps.textContent = G.steps;
+    hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2); hSteps.textContent = G.steps;
     hSpeed.style.width = (100 * G.v / VMAX).toFixed(1) + '%';
 
     renderer.render(scene, camera);
