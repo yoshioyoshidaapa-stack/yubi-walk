@@ -16,6 +16,7 @@
   --pad: #1d2a44;
   --pad-mark: #7f8db0;
   --pad-hi: #32456f;
+  --danger: #e0241b;
   --font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
   color-scheme: light;
 }
@@ -69,6 +70,8 @@ body {
   border: 2px solid var(--ink); border-radius: 999px; padding: 6px 12px; cursor: pointer; touch-action: manipulation;
 }
 #btnSteer:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+#danger { position: absolute; inset: 0; pointer-events: none; opacity: 0; box-shadow: inset 0 0 70px 28px var(--danger); }
+#hLife { color: var(--accent); letter-spacing: 2px; }
 .speed { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(29,42,68,.18); pointer-events: none; }
 .speed i { display: block; height: 100%; width: 0; background: var(--accent); }
 #toast {
@@ -112,6 +115,7 @@ body {
   <div id="view">
     <canvas id="c"></canvas>
     <div class="hud">
+      <span class="chip"><b id="hLife">♥♥♥</b></span>
       <span class="chip">サル <b id="hFlags">0</b> / 5</span>
       <span class="chip">サルまで <span id="hArrow">▲</span><b id="hFar">0</b> m</span>
       <span class="chip"><b id="hTime">0.00</b> 秒</span>
@@ -119,6 +123,7 @@ body {
     </div>
     <button id="btnSteer" type="button">曲がり方: 蹴った逆へ</button>
     <div class="speed"><i id="hSpeed"></i></div>
+    <div id="danger"></div>
     <div id="toast"></div>
   </div>
   <div id="pad">
@@ -136,7 +141,8 @@ body {
         <li><b>曲がる</b>ななめに引く。右ななめ手前に引くと左へ、左ななめ手前に引くと右へ曲がります（左下のボタンで逆にできます）。</li>
         <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。丸太をとびこえます。</li>
         <li><b>捕まえる</b>サルにさわれば捕まえられます。近づくと逃げますが、追い続けると疲れて遅くなります。柵に追いつめるのも手です。</li>
-        <li><b>クマ</b>歩き始めるとクマが追ってきます。さわられたら終わりです。サルを捕まえるたびに少し速くなります。上の「クマ」の ▲ と数字が方向と距離で、近づくと赤くなります。</li>
+        <li><b>クマ</b>歩き始めるとクマが追ってきます。なぐられるとふっとばされて、ライフ（♥）が1つ減ります。3つなくなると終わりです。クマが近づくと画面のふちが赤くなります。</li>
+        <li><b>川と橋</b>川の中はゆっくりしか歩けません（クマもサルも同じ）。橋の上なら普通に渡れます。</li>
         <li><b>サルの場所</b>上の ▲ がいちばん近いサルの方向、数字が距離です。</li>
       </ul>
       <p>パソコンでは F・J キーを交互に、A・D キーで曲がる、スペースでジャンプ。</p>
@@ -181,7 +187,7 @@ body {
   var JUMP_V = 4.6, GRAVITY = 14;
   var FIELD_R = 42;        // radius of the walkable field (m)
   var LOG_H = 0.4;         // height of the logs you must jump (m)
-  var MONKEY_POS = [[6, -16], [-20, -26], [24, -4], [-12, 18], [16, 26]];   // where each monkey starts
+  var MONKEY_POS = [[6, -18], [-20, -24], [28, 4], [-12, 20], [14, 28]];   // where each monkey starts
   var MONKEY_SPEED = [2.0, 2.3, 2.6, 2.9, 3.2];   // top fleeing speed of each monkey (m/s); your own steady pace is about 3.5
   var MONKEY_SEE = 9;      // a monkey starts fleeing when you are closer than this (m)
   var MONKEY_TIRE = 5;     // seconds of fleeing until a monkey is fully tired (it then runs at 55% speed)
@@ -190,8 +196,20 @@ body {
   var BEAR_SPEED = 2.2;    // bear speed (m/s); it never tires. Your own steady pace is about 3.5
   var BEAR_GAIN = 0.1;     // the bear gets this much faster for every monkey you catch
   var BEAR_R = 1.4;        // if the bear gets this close, you are caught (m)
-  var BEAR_NEAR = 8;       // the bear readout turns red inside this distance (m)
-  var LOG_POS = [[3, -9], [-11, -19], [15, -9], [-6, 9], [10, 16], [-22, -8]];
+  var BEAR_NEAR = 10;      // the screen edge starts to glow red and the bear readout turns red inside this distance (m)
+  var LIVES = 3;           // hits you can take
+  var KNOCK_V = 14;        // how hard a hit throws you (m/s at first; you land about 2.3 m away)
+  var SAFE_MS = 2000;      // after a hit you cannot be hit again for this long
+  var STUN_MS = 1500;      // after hitting you the bear stands still for this long
+  var LOG_POS = [[4, 8], [-11, -24], [18, -22], [-6, 12], [10, 22], [-26, 2]];
+  // terrain: a winding river crosses the field, two bridges cross the river, hills are [centre x, centre z, height, radius]
+  var RIVER_Z = -10, RIVER_AMP = 4, RIVER_LEN = 10;   // the river's centre line is z = RIVER_Z + RIVER_AMP * sin(x / RIVER_LEN)
+  var RIVER_W = 2.5;       // half width of the river (m)
+  var WATER_Y = -0.25, BED_Y = -0.7;                  // height of the water surface and of the river bed
+  var BRIDGE_X = [-15.7, 15.7], BRIDGE_HALF_W = 1.5, BRIDGE_HALF_L = 5.2, DECK_Y = 0.12;
+  var HILLS = [[-22, 16, 4, 9], [22, 18, 3, 8], [6, -32, 3.5, 9], [-30, -28, 3, 8]];
+  var WADE_V = 1.3;        // your top speed while wading through the river (m/s)
+  var WATER_SLOW = 0.45;   // monkeys and the bear move at this fraction of their speed in the river
 
   // ---------- scene ----------
   var renderer;
@@ -209,22 +227,60 @@ body {
   function box(w, h, d, c) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); }
   var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
 
-  var ground = new THREE.Mesh(new THREE.CircleGeometry(160, 48), mat(0x7fbf6a));
-  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  // ---------- terrain ----------
+  function riverZ(x) { return RIVER_Z + RIVER_AMP * Math.sin(x / RIVER_LEN); }
+  function smooth(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+  function hAt(x, z) {                                  // height of the earth itself
+    var d = Math.abs(z - riverZ(x)), hill = 0;
+    HILLS.forEach(function (p) { hill += p[2] * Math.exp(-((x - p[0]) * (x - p[0]) + (z - p[1]) * (z - p[1])) / (p[3] * p[3])); });
+    hill *= smooth((d - RIVER_W - 2) / 6);              // hills flatten out towards the river
+    return hill + BED_Y * (1 - smooth((d - RIVER_W + 0.6) / 1.8));   // the river is a trench
+  }
+  function onBridge(x, z) {
+    return BRIDGE_X.some(function (bx) { return Math.abs(x - bx) < BRIDGE_HALF_W && Math.abs(z - riverZ(bx)) < BRIDGE_HALF_L; });
+  }
+  function groundY(x, z) { return onBridge(x, z) ? DECK_Y : hAt(x, z); }   // what you stand on
+  function inWater(x, z) { return !onBridge(x, z) && hAt(x, z) < WATER_Y - 0.05; }
+
+  var gg = new THREE.PlaneGeometry(220, 220, 176, 176); gg.rotateX(-Math.PI / 2);
+  var gp = gg.attributes.position, i;
+  for (i = 0; i < gp.count; i++) gp.setY(i, hAt(gp.getX(i), gp.getZ(i)));
+  gg.computeVertexNormals();
+  scene.add(new THREE.Mesh(gg, mat(0x7fbf6a)));
+
+  var wv = [], wi = [], wn = 0;                         // the water: a ribbon that follows the river
+  for (var wx = -110; wx <= 110; wx += 2) {
+    var wz = riverZ(wx); wv.push(wx, WATER_Y, wz - RIVER_W - 1.4, wx, WATER_Y, wz + RIVER_W + 1.4);
+    if (wn) { var w0 = (wn - 1) * 2; wi.push(w0, w0 + 1, w0 + 2, w0 + 1, w0 + 3, w0 + 2); }
+    wn++;
+  }
+  var wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wv, 3)); wg.setIndex(wi);
+  scene.add(new THREE.Mesh(wg, new THREE.MeshBasicMaterial({ color: 0x4fb3de, transparent: true, opacity: 0.8, side: THREE.DoubleSide })));
+
+  BRIDGE_X.forEach(function (bx) {
+    var bz = riverZ(bx), L = BRIDGE_HALF_L * 2;
+    var deck = box(BRIDGE_HALF_W * 2, 0.2, L, 0xb98a55); deck.position.set(bx, DECK_Y - 0.1, bz); scene.add(deck);
+    [-1, 1].forEach(function (sd) {
+      var rail = box(0.12, 0.12, L, 0x8a6240); rail.position.set(bx + sd * BRIDGE_HALF_W, DECK_Y + 0.7, bz); scene.add(rail);
+      for (var k = -2; k <= 2; k++) { var pp = box(0.14, 0.8, 0.14, 0x8a6240); pp.position.set(bx + sd * BRIDGE_HALF_W, DECK_Y + 0.3, bz + k * L / 4.2); scene.add(pp); }
+    });
+  });
 
   // grass tufts: without marks on the ground you cannot see that you are moving
   var tufts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.04, 0.5), mat(0x6aae58), 520);
-  var m4 = new THREE.Matrix4(), i;
+  var m4 = new THREE.Matrix4();
   for (i = 0; i < 520; i++) {
     var a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * (FIELD_R + 6);
-    m4.makeRotationY(rnd() * 3); m4.setPosition(Math.cos(a) * r, 0.02, Math.sin(a) * r); tufts.setMatrixAt(i, m4);
+    var ux = Math.cos(a) * r, uz = Math.sin(a) * r;
+    m4.makeRotationY(rnd() * 3); m4.setPosition(ux, inWater(ux, uz) || onBridge(ux, uz) ? -9 : hAt(ux, uz) + 0.03, uz); tufts.setMatrixAt(i, m4);
   }
   scene.add(tufts);
 
   // fence posts mark the edge of the field
   for (i = 0; i < 72; i++) {
     var fa = i / 72 * Math.PI * 2, post = box(0.2, 1, 0.2, 0x8a6240);
-    post.position.set(Math.cos(fa) * (FIELD_R + 0.8), 0.5, Math.sin(fa) * (FIELD_R + 0.8)); scene.add(post);
+    var px = Math.cos(fa) * (FIELD_R + 0.8), pz = Math.sin(fa) * (FIELD_R + 0.8);
+    post.position.set(px, hAt(px, pz) + 0.5, pz); scene.add(post);
   }
 
   function near(x, z, list, d) { return list.some(function (p) { return Math.hypot(p[0] - x, p[1] - z) < d; }); }
@@ -232,11 +288,11 @@ body {
   for (i = 0; i < 70; i++) {
     var ta = rnd() * Math.PI * 2, tr = 5 + rnd() * (FIELD_R + 14), tx = Math.cos(ta) * tr, tz = Math.sin(ta) * tr, s = 0.8 + rnd() * 0.9;
     var leafC = rnd() > 0.5 ? 0x3f8f58 : 0x55a567;
-    if (near(tx, tz, LOG_POS, 3.5)) continue;
+    if (near(tx, tz, LOG_POS, 3.5) || Math.abs(tz - riverZ(tx)) < RIVER_W + 2.5 || near(tx, tz, BRIDGE_X.map(function (bx) { return [bx, riverZ(bx)]; }), 9)) continue;
     var t = new THREE.Group();
     var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
     var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(leafC)); leaf.position.y = 2; t.add(leaf);
-    t.scale.setScalar(s); t.position.set(tx, 0, tz); scene.add(t);
+    t.scale.setScalar(s); t.position.set(tx, hAt(tx, tz) - 0.1, tz); scene.add(t);
     trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3 });
   }
 
@@ -255,13 +311,13 @@ body {
     var l1 = box(0.13, 0.34, 0.13, FUR); l1.position.set(-0.12, 0.17, 0); g.add(l1);
     var l2 = l1.clone(); l2.position.x = 0.12; g.add(l2);
     var tail = box(0.07, 0.07, 0.6, FUR); tail.position.set(0, 0.5, -0.42); tail.rotation.x = 0.7; g.add(tail);
-    g.scale.setScalar(1.15); g.position.set(p[0], 0, p[1]); scene.add(g);
+    g.scale.setScalar(1.15); g.position.set(p[0], hAt(p[0], p[1]), p[1]); scene.add(g);
     return { hx: p[0], hz: p[1], x: p[0], z: p[1], g: g, got: false, speed: MONKEY_SPEED[n], dir: 0, st: 1, wt: 0, walk: false, hop: 0, ph: n * 1.7 };
   });
   window.__monkeys = monkeys;
 
   // the bear: also built facing +z, walking on all fours
-  var bear = { x: BEAR_START[0], z: BEAR_START[1], dir: Math.PI, hop: 0, g: new THREE.Group() };
+  var bear = { x: BEAR_START[0], z: BEAR_START[1], dir: Math.PI, hop: 0, stunT: 0, g: new THREE.Group() };
   (function () {
     var FUR = 0x4a3222, SNOUT = 0xc9a27a, g = bear.g;
     var body = box(0.95, 0.85, 1.4, FUR); body.position.y = 0.85; g.add(body);
@@ -279,7 +335,7 @@ body {
 
   var logs = LOG_POS.map(function (p) {       // logs lie along the x axis, 3 m long
     var m = new THREE.Mesh(new THREE.CylinderGeometry(LOG_H / 2, LOG_H / 2, 3, 10), mat(0x8a6240));
-    m.rotation.z = Math.PI / 2; m.position.set(p[0], LOG_H / 2, p[1]); scene.add(m);
+    m.rotation.z = Math.PI / 2; m.position.set(p[0], hAt(p[0], p[1]) + LOG_H / 2, p[1]); scene.add(m);
     return { x: p[0], z: p[1] };
   });
 
@@ -309,7 +365,7 @@ body {
 
   // ---------- game state ----------
   // h = heading in radians (0 faces "into" the screen at the start, positive = turned left); ch = camera heading, which follows h
-  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0, bearT: 0 };
+  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0, bearT: 0, life: LIVES, safeT: 0, hitT: -1000, kx: 0, kz: 0, cy: 0 };
   var steer = 1;           // +1: dragging right turns left ("opposite of the kick"); -1: dragging right turns right
   try { if (localStorage.getItem('yubiwalk-steer') === 'same') steer = -1; } catch (err) {}
   var btnSteer = $('btnSteer');
@@ -331,9 +387,9 @@ body {
   }
 
   function reset() {
-    G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0;
+    G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0; G.life = LIVES; G.safeT = 0; G.hitT = -1000; G.kx = 0; G.kz = 0; G.cy = 0;
     monkeys.forEach(function (m) { m.got = false; m.g.visible = true; m.x = m.hx; m.z = m.hz; m.st = 1; m.wt = 0; });
-    bear.x = BEAR_START[0]; bear.z = BEAR_START[1]; bear.dir = Math.PI; bear.hop = 0;
+    bear.x = BEAR_START[0]; bear.z = BEAR_START[1]; bear.dir = Math.PI; bear.hop = 0; bear.stunT = 0;
     lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
@@ -425,8 +481,8 @@ body {
 
   function lose() {
     G.state = 'goal'; G.running = false;
-    $('gTitle').textContent = 'クマに捕まった…'; $('gTime').textContent = G.time.toFixed(2);
-    $('gNote').textContent = 'サルを' + G.got + '匹捕まえたところで、クマに追いつかれました。'; $('goal').hidden = false;
+    $('gTitle').textContent = 'クマにやられた…'; $('gTime').textContent = G.time.toFixed(2);
+    $('gNote').textContent = 'サルを' + G.got + '匹捕まえたところで、ライフがなくなりました。'; $('goal').hidden = false;
   }
   function finish() {
     G.state = 'goal'; G.running = false;
@@ -442,7 +498,7 @@ body {
   }
 
   // ---------- loop ----------
-  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSpeed = $('hSpeed'), hBear = $('hBear'), hBArrow = $('hBArrow'), cBear = $('cBear');
+  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSpeed = $('hSpeed'), hBear = $('hBear'), hBArrow = $('hBArrow'), cBear = $('cBear'), dangerEl = $('danger'), hLife = $('hLife');
   var last = performance.now();
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -458,7 +514,9 @@ body {
       if (G.v < 0.02) G.v = 0;
 
       var fx = -Math.sin(G.h), fz = -Math.cos(G.h);    // forward direction
-      var nx = G.x + fx * G.v * dt, nz = G.z + fz * G.v * dt;
+      if (G.y === 0 && inWater(G.x, G.z)) G.v = Math.min(G.v, WADE_V);   // wading is slow
+      var nx = G.x + (fx * G.v + G.kx) * dt, nz = G.z + (fz * G.v + G.kz) * dt;   // kx, kz: being thrown by a hit
+      var kd = Math.exp(-6 * dt); G.kx *= kd; G.kz *= kd;
 
       logs.forEach(function (l) {                      // crossing a log on the ground trips you
         if ((G.z - l.z) * (nz - l.z) < 0 && Math.abs(nx - l.x) < 1.5 && G.y < LOG_H && now - G.tripT > 600) {
@@ -494,22 +552,33 @@ body {
           if (m.wt <= 0) { m.wt = 1 + Math.random() * 3; m.dir = Math.random() * Math.PI * 2; m.walk = Math.random() > 0.4; }
           sp = m.walk ? 0.8 : 0;
         }
+        if (inWater(m.x, m.z)) sp *= WATER_SLOW;
         var mx = m.x + Math.sin(m.dir) * sp * dt, mz = m.z + Math.cos(m.dir) * sp * dt;
         var mr = Math.hypot(mx, mz), lim = FIELD_R - 1;
         if (mr > lim) { mx *= lim / mr; mz *= lim / mr; }   // the fence stops monkeys too, so you can corner them
         m.x = mx; m.z = mz; m.hop += dt * sp * 4;
-        m.g.position.set(m.x, sp > 0 ? Math.abs(Math.sin(m.hop)) * 0.25 : 0, m.z);
+        m.g.position.set(m.x, groundY(m.x, m.z) + (sp > 0 ? Math.abs(Math.sin(m.hop)) * 0.25 : 0), m.z);
         m.g.rotation.y = m.dir;
       });
       if (G.got >= monkeys.length) finish();
 
       if (G.state === 'play' && G.running) {           // the bear walks straight at you once you have started moving
         var bdx = G.x - bear.x, bdz = G.z - bear.z, bd = Math.hypot(bdx, bdz);
-        if (bd < BEAR_R) lose();
-        else {
+        if (bd < BEAR_R && now > G.safeT) {            // the bear hits you: lose a life and get thrown away from it
+          G.life--; G.hitT = now;
+          if (G.life <= 0) lose();
+          else {
+            var kn = bd > 0.01 ? 1 / bd : 0;
+            G.kx = (kn ? bdx * kn : fx) * KNOCK_V; G.kz = (kn ? bdz * kn : fz) * KNOCK_V;
+            G.v = 0; G.vy = 3.2; G.y = 0.0001;
+            G.safeT = now + SAFE_MS; bear.stunT = now + STUN_MS;
+            toast('クマになぐられた！ ライフ −1');
+          }
+        } else if (now > bear.stunT && bd > 0.01) {
           var bs = BEAR_SPEED + BEAR_GAIN * G.got;
+          if (inWater(bear.x, bear.z)) bs *= WATER_SLOW;
           bear.dir = Math.atan2(bdx, bdz); bear.x += bdx / bd * bs * dt; bear.z += bdz / bd * bs * dt; bear.hop += dt * bs * 3;
-          if (bd < BEAR_NEAR && now - G.bearT > 2500) { G.bearT = now; toast('クマが近い！'); }
+          if (bd < BEAR_NEAR - 2 && now - G.bearT > 2500 && now > G.safeT) { G.bearT = now; toast('クマが近い！'); }
         }
       }
     } else if (G.state === 'goal') G.v -= G.v * 3 * dt;
@@ -523,10 +592,14 @@ body {
     } else hFar.textContent = '0';
 
     // bear: model, arrow, distance, red warning
-    bear.g.position.set(bear.x, Math.abs(Math.sin(bear.hop)) * 0.12, bear.z); bear.g.rotation.y = bear.dir;
+    bear.g.position.set(bear.x, groundY(bear.x, bear.z) + Math.abs(Math.sin(bear.hop)) * 0.12, bear.z); bear.g.rotation.y = bear.dir;
     var bdist = Math.hypot(bear.x - G.x, bear.z - G.z), brel = Math.atan2(-(bear.x - G.x), -(bear.z - G.z)) - G.h;
     hBArrow.style.transform = 'rotate(' + (-brel).toFixed(3) + 'rad)'; hBear.textContent = Math.round(bdist);
     cBear.classList.toggle('danger', bdist < BEAR_NEAR);
+    var dng = (G.state === 'play' && G.running) ? Math.max(0, Math.min(1, (BEAR_NEAR - bdist) / (BEAR_NEAR - BEAR_R))) : 0;
+    if (now - G.hitT < 300) dng = 1; else dng *= 0.75 + 0.25 * Math.sin(now / 120);   // red screen edge: stronger as the bear closes in, full flash on a hit
+    dangerEl.style.opacity = dng.toFixed(2);
+    hLife.textContent = '♥♥♥♥♥'.slice(0, Math.max(0, G.life)) + '♡♡♡♡♡'.slice(0, LIVES - Math.max(0, G.life));
 
     // pose
     var moving = G.v > 0.15, amp = moving ? 0.3 + 0.6 * Math.min(1, G.v / 5) : 0;
@@ -535,15 +608,19 @@ body {
     else { legL.rotation.x += (target - legL.rotation.x) * k; legR.rotation.x += (-target - legR.rotation.x) * k; }
     armL.rotation.x += (-target * 0.8 - armL.rotation.x) * k; armR.rotation.x += (target * 0.8 - armR.rotation.x) * k;
     G.bounce = Math.max(0, G.bounce - dt * 6);
-    hero.position.set(G.x, G.y + 0.05 * G.bounce, G.z);
+    var gy = groundY(G.x, G.z);
+    hero.position.set(G.x, gy + G.y + 0.05 * G.bounce, G.z);
+    hero.visible = !(G.state === 'play' && now < G.safeT && Math.floor(now / 100) % 2);   // blink while you cannot be hit
     hero.rotation.y = G.h;
-    shadow.position.set(G.x, 0.04, G.z); shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
+    shadow.position.set(G.x, gy + 0.04, G.z); shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
 
     // camera sits behind and above, and swings round a little later than the character turns
     G.ch += (G.h - G.ch) * Math.min(1, dt * 5);
     var cx = -Math.sin(G.ch), cz = -Math.cos(G.ch);
-    camera.position.set(G.x - cx * 4.4, 3.3, G.z - cz * 4.4);
-    camera.lookAt(G.x + cx * 3.5, 0.9, G.z + cz * 3.5);
+    G.cy += (gy - G.cy) * Math.min(1, dt * 6);          // follow the ground height smoothly
+    var camX = G.x - cx * 4.4, camZ = G.z - cz * 4.4;
+    camera.position.set(camX, Math.max(G.cy + 3.3, hAt(camX, camZ) + 1.4), camZ);   // never sink into a hill behind you
+    camera.lookAt(G.x + cx * 3.5, G.cy + 0.9, G.z + cz * 3.5);
 
     hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2);
     hSpeed.style.width = (100 * G.v / VMAX).toFixed(1) + '%';
