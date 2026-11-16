@@ -16,6 +16,7 @@
   --pad: #1d2a44;
   --pad-mark: #7f8db0;
   --pad-hi: #32456f;
+  --danger: #e0241b;
   --font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
   color-scheme: light;
 }
@@ -60,13 +61,17 @@ body {
   font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .chip b { font-weight: 800; font-size: 16px; }
-#hArrow { display: inline-block; color: var(--accent); font-size: 15px; margin-right: 4px; }
+#hArrow, #hBArrow { display: inline-block; color: var(--accent); font-size: 15px; margin-right: 4px; }
+.chip.danger { background: var(--accent); color: var(--panel); }
+.chip.danger #hBArrow { color: var(--panel); }
 #btnSteer {
   position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 16px;
   font: inherit; font-size: 13px; font-weight: 800; color: var(--ink); background: var(--panel);
   border: 2px solid var(--ink); border-radius: 999px; padding: 6px 12px; cursor: pointer; touch-action: manipulation;
 }
 #btnSteer:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+#danger { position: absolute; inset: 0; pointer-events: none; opacity: 0; box-shadow: inset 0 0 70px 28px var(--danger); }
+#hLife { color: var(--accent); letter-spacing: 2px; }
 .speed { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(29,42,68,.18); pointer-events: none; }
 .speed i { display: block; height: 100%; width: 0; background: var(--accent); }
 #toast {
@@ -110,13 +115,15 @@ body {
   <div id="view">
     <canvas id="c"></canvas>
     <div class="hud">
+      <span class="chip"><b id="hLife">♥♥♥</b></span>
       <span class="chip">サル <b id="hFlags">0</b> / 5</span>
-      <span class="chip"><span id="hArrow">▲</span><b id="hFar">0</b> m</span>
+      <span class="chip">サルまで <span id="hArrow">▲</span><b id="hFar">0</b> m</span>
       <span class="chip"><b id="hTime">0.00</b> 秒</span>
-      <span class="chip"><b id="hSteps">0</b> 歩</span>
+      <span class="chip" id="cBear">クマ <span id="hBArrow">▲</span><b id="hBear">0</b> m</span>
     </div>
     <button id="btnSteer" type="button">曲がり方: 蹴った逆へ</button>
     <div class="speed"><i id="hSpeed"></i></div>
+    <div id="danger"></div>
     <div id="toast"></div>
   </div>
   <div id="pad">
@@ -128,12 +135,15 @@ body {
   <div id="start" class="overlay">
     <div class="card">
       <h1>ゆびウォーク</h1>
-      <p>スマホを机に置いて、人差し指と中指を足のように動かします。広場を逃げ回るサルを5匹、ぜんぶ捕まえるまでのタイムを計ります。</p>
+      <p>スマホを机に置いて、人差し指と中指を足のように動かします。うしろから追ってくるクマから逃げながら、広場のサルを5匹ぜんぶ捕まえるまでのタイムを計ります。</p>
       <ul>
         <li><b>歩く</b>「左足」「右足」の枠に指を置いて、手前（画面の下のほう）へ引く。左右交互に。</li>
         <li><b>曲がる</b>ななめに引く。右ななめ手前に引くと左へ、左ななめ手前に引くと右へ曲がります（左下のボタンで逆にできます）。</li>
         <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。丸太をとびこえます。</li>
         <li><b>捕まえる</b>サルにさわれば捕まえられます。近づくと逃げますが、追い続けると疲れて遅くなります。柵に追いつめるのも手です。</li>
+        <li><b>クマ</b>歩き始めるとクマが追ってきます。なぐられるとふっとばされて、ライフ（♥）が1つ減ります。3つなくなると終わりです。クマが近づくと画面のふちが赤くなります。</li>
+        <li><b>川と橋</b>川の中はゆっくりしか歩けません（クマもサルも同じ）。橋の上なら普通に渡れます。</li>
+        <li><b>キノコ</b>広場に3本生えています。さわるとライフが1つ回復します（満タンのときは取れません）。</li>
         <li><b>サルの場所</b>上の ▲ がいちばん近いサルの方向、数字が距離です。</li>
       </ul>
       <p>パソコンでは F・J キーを交互に、A・D キーで曲がる、スペースでジャンプ。</p>
@@ -143,7 +153,7 @@ body {
 
   <div id="goal" class="overlay" hidden>
     <div class="card">
-      <h1>サルをぜんぶ捕まえた！</h1>
+      <h1 id="gTitle">サルをぜんぶ捕まえた！</h1>
       <div class="big"><span id="gTime">0.00</span> 秒</div>
       <p id="gNote"></p>
       <button id="btnRetry" type="button">もう一度</button>
@@ -170,7 +180,7 @@ body {
   var KICK = 1.1;          // speed gained per key press on a keyboard (m/s)
   var DRAG_GAIN = 0.012;   // speed gained per pixel a finger is dragged backward (m/s per px)
   var STEP_PX = 24;        // px of backward drag before a touch counts as a step
-  var TURN_GAIN = 0.006;   // radians turned per pixel of sideways drag (after the dead zone)
+  var TURN_GAIN = 0.009;   // radians turned per pixel of sideways drag (after the dead zone)
   var DEAD = 0.35;         // sideways drag up to this fraction of the backward drag still counts as "straight"
   var KEY_TURN = 1.8;      // radians per second when turning with the keyboard
   var FRICTION = 1.6;      // how fast speed fades when you stop stepping
@@ -178,45 +188,122 @@ body {
   var JUMP_V = 4.6, GRAVITY = 14;
   var FIELD_R = 42;        // radius of the walkable field (m)
   var LOG_H = 0.4;         // height of the logs you must jump (m)
-  var MONKEY_POS = [[6, -16], [-20, -26], [24, -4], [-12, 18], [16, 26]];   // where each monkey starts
+  var MONKEY_POS = [[6, -18], [-20, -24], [28, 4], [-12, 20], [14, 28]];   // where each monkey starts
   var MONKEY_SPEED = [2.0, 2.3, 2.6, 2.9, 3.2];   // top fleeing speed of each monkey (m/s); your own steady pace is about 3.5
   var MONKEY_SEE = 9;      // a monkey starts fleeing when you are closer than this (m)
   var MONKEY_TIRE = 5;     // seconds of fleeing until a monkey is fully tired (it then runs at 55% speed)
   var CATCH_R = 1.2;       // touch distance that counts as a catch (m)
-  var LOG_POS = [[3, -9], [-11, -19], [15, -9], [-6, 9], [10, 16], [-22, -8]];
+  var BEAR_START = [0, 30]; // where the bear starts: 30 m behind you
+  var BEAR_SPEED = 2.2;    // bear speed (m/s); it never tires. Your own steady pace is about 3.5
+  var BEAR_GAIN = 0.1;     // the bear gets this much faster for every monkey you catch
+  var BEAR_R = 1.4;        // if the bear gets this close, you are caught (m)
+  var BEAR_NEAR = 10;      // the screen edge starts to glow red and the bear readout turns red inside this distance (m)
+  var LIVES = 3;           // hits you can take
+  var MUSH_POS = [[-8, -4], [20, -18], [-18, 26]];   // healing mushrooms: each restores one life
+  var KNOCK_V = 14;        // how hard a hit throws you (m/s at first; you land about 2.3 m away)
+  var SAFE_MS = 2000;      // after a hit you cannot be hit again for this long
+  var STUN_MS = 1500;      // after hitting you the bear stands still for this long
+  var LOG_POS = [[4, 8], [-11, -24], [18, -22], [-6, 12], [10, 22], [-26, 2]];
+  // terrain: a winding river crosses the field, two bridges cross the river, hills are [centre x, centre z, height, radius]
+  var RIVER_Z = -10, RIVER_AMP = 4, RIVER_LEN = 10;   // the river's centre line is z = RIVER_Z + RIVER_AMP * sin(x / RIVER_LEN)
+  var RIVER_W = 2.5;       // half width of the river (m)
+  var WATER_Y = -0.25, BED_Y = -0.7;                  // height of the water surface and of the river bed
+  var BRIDGE_X = [-15.7, 15.7], BRIDGE_HALF_W = 1.5, BRIDGE_HALF_L = 5.2, DECK_Y = 0.12;
+  var HILLS = [[-22, 16, 4, 9], [22, 18, 3, 8], [6, -32, 3.5, 9], [-30, -28, 3, 8]];
+  var WADE_V = 1.3;        // your top speed while wading through the river (m/s)
+  var WATER_SLOW = 0.45;   // monkeys and the bear move at this fraction of their speed in the river
 
   // ---------- scene ----------
   var renderer;
   try { renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true }); }
   catch (err) { fail('この画面では3D表示(WebGL)が使えませんでした: ' + (err && err.message ? err.message : err)); return; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   var scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xbfe3f2);
-  scene.fog = new THREE.Fog(0xbfe3f2, 30, 85);
+  // sky: deeper blue overhead fading to a pale haze at the horizon; the fog uses the same haze colour so the ground melts into it
+  var skyC = document.createElement('canvas'); skyC.width = 2; skyC.height = 256;
+  var skyG = skyC.getContext('2d'), grd = skyG.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, '#5fa9e6'); grd.addColorStop(0.17, '#d3ecf4'); grd.addColorStop(1, '#d3ecf4');
+  skyG.fillStyle = grd; skyG.fillRect(0, 0, 2, 256);
+  scene.background = new THREE.CanvasTexture(skyC);
+  scene.fog = new THREE.Fog(0xd3ecf4, 34, 95);
   var camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x6f9a5c, 0.95));
-  var sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(4, 10, 6); scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x6f9a5c, 0.8));
+  var sun = new THREE.DirectionalLight(0xfff1d6, 0.75); scene.add(sun); scene.add(sun.target);   // warm sunlight that casts real shadows
+  sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0006;
+  sun.shadow.camera.left = -22; sun.shadow.camera.right = 22; sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -22;
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
 
   function mat(c) { return new THREE.MeshLambertMaterial({ color: c }); }
-  function box(w, h, d, c) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); }
+  function box(w, h, d, c) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); m.castShadow = true; return m; }
   var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
 
-  var ground = new THREE.Mesh(new THREE.CircleGeometry(160, 48), mat(0x7fbf6a));
-  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  // ---------- terrain ----------
+  function riverZ(x) { return RIVER_Z + RIVER_AMP * Math.sin(x / RIVER_LEN); }
+  function smooth(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+  function hAt(x, z) {                                  // height of the earth itself
+    var d = Math.abs(z - riverZ(x)), hill = 0;
+    HILLS.forEach(function (p) { hill += p[2] * Math.exp(-((x - p[0]) * (x - p[0]) + (z - p[1]) * (z - p[1])) / (p[3] * p[3])); });
+    hill *= smooth((d - RIVER_W - 2) / 6);              // hills flatten out towards the river
+    return hill + BED_Y * (1 - smooth((d - RIVER_W + 0.6) / 1.8));   // the river is a trench
+  }
+  function onBridge(x, z) {
+    return BRIDGE_X.some(function (bx) { return Math.abs(x - bx) < BRIDGE_HALF_W && Math.abs(z - riverZ(bx)) < BRIDGE_HALF_L; });
+  }
+  function groundY(x, z) { return onBridge(x, z) ? DECK_Y : hAt(x, z); }   // what you stand on
+  function inWater(x, z) { return !onBridge(x, z) && hAt(x, z) < WATER_Y - 0.05; }
+
+  var gg = new THREE.PlaneGeometry(220, 220, 176, 176); gg.rotateX(-Math.PI / 2);
+  var gp = gg.attributes.position, i;
+  // colour the ground point by point: patchy grass, paler on the hilltops, sand on the river banks, mud on the river bed
+  var gcol = new Float32Array(gp.count * 3), tc = new THREE.Color();
+  var C_GRASS = new THREE.Color(0x7fbf6a), C_GRASS2 = new THREE.Color(0x63a653), C_HIGH = new THREE.Color(0xb1d684), C_SAND = new THREE.Color(0xe6d6a3), C_BED = new THREE.Color(0x8d8462);
+  for (i = 0; i < gp.count; i++) {
+    var vx = gp.getX(i), vz = gp.getZ(i), vy = hAt(vx, vz), vd = Math.abs(vz - riverZ(vx));
+    gp.setY(i, vy);
+    var patch = 0.5 + 0.5 * Math.sin(vx * 0.35 + Math.sin(vz * 0.27) * 2) * Math.cos(vz * 0.31 + vx * 0.11);
+    tc.copy(C_GRASS).lerp(C_GRASS2, patch * 0.85).lerp(C_HIGH, Math.max(0, Math.min(1, vy / 3.5)));
+    tc.lerp(C_SAND, 1 - smooth((vd - RIVER_W - 0.2) / 1.8)).lerp(C_BED, 1 - smooth((vd - RIVER_W + 1.3) / 1.0));
+    gcol[i * 3] = tc.r; gcol[i * 3 + 1] = tc.g; gcol[i * 3 + 2] = tc.b;
+  }
+  gg.setAttribute('color', new THREE.BufferAttribute(gcol, 3));
+  gg.computeVertexNormals();
+  var groundMesh = new THREE.Mesh(gg, new THREE.MeshLambertMaterial({ vertexColors: true })); groundMesh.receiveShadow = true; scene.add(groundMesh);
+
+  var wv = [], wi = [], wn = 0;                         // the water: a ribbon that follows the river
+  for (var wx = -110; wx <= 110; wx += 2) {
+    var wz = riverZ(wx); wv.push(wx, WATER_Y, wz - RIVER_W - 1.4, wx, WATER_Y, wz + RIVER_W + 1.4);
+    if (wn) { var w0 = (wn - 1) * 2; wi.push(w0, w0 + 1, w0 + 2, w0 + 1, w0 + 3, w0 + 2); }
+    wn++;
+  }
+  var wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wv, 3)); wg.setIndex(wi);
+  var waterMat = new THREE.MeshBasicMaterial({ color: 0x4fb3de, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+  scene.add(new THREE.Mesh(wg, waterMat));
+
+  BRIDGE_X.forEach(function (bx) {
+    var bz = riverZ(bx), L = BRIDGE_HALF_L * 2;
+    var deck = box(BRIDGE_HALF_W * 2, 0.2, L, 0xb98a55); deck.position.set(bx, DECK_Y - 0.1, bz); deck.castShadow = false; deck.receiveShadow = true; scene.add(deck);
+    [-1, 1].forEach(function (sd) {
+      var rail = box(0.12, 0.12, L, 0x8a6240); rail.position.set(bx + sd * BRIDGE_HALF_W, DECK_Y + 0.7, bz); scene.add(rail);
+      for (var k = -2; k <= 2; k++) { var pp = box(0.14, 0.8, 0.14, 0x8a6240); pp.position.set(bx + sd * BRIDGE_HALF_W, DECK_Y + 0.3, bz + k * L / 4.2); scene.add(pp); }
+    });
+  });
 
   // grass tufts: without marks on the ground you cannot see that you are moving
   var tufts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.04, 0.5), mat(0x6aae58), 520);
-  var m4 = new THREE.Matrix4(), i;
+  var m4 = new THREE.Matrix4();
   for (i = 0; i < 520; i++) {
     var a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * (FIELD_R + 6);
-    m4.makeRotationY(rnd() * 3); m4.setPosition(Math.cos(a) * r, 0.02, Math.sin(a) * r); tufts.setMatrixAt(i, m4);
+    var ux = Math.cos(a) * r, uz = Math.sin(a) * r;
+    m4.makeRotationY(rnd() * 3); m4.setPosition(ux, inWater(ux, uz) || onBridge(ux, uz) ? -9 : hAt(ux, uz) + 0.03, uz); tufts.setMatrixAt(i, m4);
   }
   scene.add(tufts);
 
   // fence posts mark the edge of the field
   for (i = 0; i < 72; i++) {
     var fa = i / 72 * Math.PI * 2, post = box(0.2, 1, 0.2, 0x8a6240);
-    post.position.set(Math.cos(fa) * (FIELD_R + 0.8), 0.5, Math.sin(fa) * (FIELD_R + 0.8)); scene.add(post);
+    var px = Math.cos(fa) * (FIELD_R + 0.8), pz = Math.sin(fa) * (FIELD_R + 0.8);
+    post.position.set(px, hAt(px, pz) + 0.5, pz); scene.add(post);
   }
 
   function near(x, z, list, d) { return list.some(function (p) { return Math.hypot(p[0] - x, p[1] - z) < d; }); }
@@ -224,22 +311,27 @@ body {
   for (i = 0; i < 70; i++) {
     var ta = rnd() * Math.PI * 2, tr = 5 + rnd() * (FIELD_R + 14), tx = Math.cos(ta) * tr, tz = Math.sin(ta) * tr, s = 0.8 + rnd() * 0.9;
     var leafC = rnd() > 0.5 ? 0x3f8f58 : 0x55a567;
-    if (near(tx, tz, LOG_POS, 3.5)) continue;
+    if (near(tx, tz, LOG_POS, 3.5) || near(tx, tz, MUSH_POS, 3) || Math.abs(tz - riverZ(tx)) < RIVER_W + 2.5 || near(tx, tz, BRIDGE_X.map(function (bx) { return [bx, riverZ(bx)]; }), 9)) continue;
     var t = new THREE.Group();
     var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
-    var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(leafC)); leaf.position.y = 2; t.add(leaf);
-    t.scale.setScalar(s); t.position.set(tx, 0, tz); scene.add(t);
-    trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3 });
+    [[1.05, 1.5, 1.55], [0.8, 1.3, 2.35], [0.52, 1.1, 3.1]].forEach(function (q, n) {   // three stacked tiers of leaves
+      var leaf = new THREE.Mesh(new THREE.ConeGeometry(q[0], q[1], 8), mat(n === 1 ? leafC : (leafC === 0x3f8f58 ? 0x37804e : 0x4c995d)));
+      leaf.position.y = q[2]; leaf.castShadow = true; t.add(leaf);
+    });
+    t.scale.setScalar(s); t.position.set(tx, hAt(tx, tz) - 0.1, tz); scene.add(t);
+    trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3, g: t });
   }
 
   // monkeys: built facing +z, so rotation.y = dir makes them face the way they run
-  function ball(r, c) { return new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat(c)); }
+  function ball(r, c) { var m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat(c)); m.castShadow = true; return m; }
   var monkeys = MONKEY_POS.map(function (p, n) {
     var g = new THREE.Group(), FUR = 0x8b5a2b, SKIN = 0xf0cfa0;
     var body = box(0.42, 0.46, 0.34, FUR); body.position.y = 0.55; g.add(body);
     var belly = box(0.26, 0.3, 0.05, SKIN); belly.position.set(0, 0.55, 0.16); g.add(belly);
     var hd = ball(0.23, FUR); hd.position.y = 1.0; g.add(hd);
     var face = ball(0.16, SKIN); face.position.set(0, 0.97, 0.12); g.add(face);
+    var y1 = ball(0.035, 0x1d2a44); y1.position.set(-0.07, 1.02, 0.26); g.add(y1);
+    var y2 = ball(0.035, 0x1d2a44); y2.position.set(0.07, 1.02, 0.26); g.add(y2);
     var e1 = ball(0.09, SKIN); e1.position.set(-0.24, 1.03, 0); g.add(e1);
     var e2 = ball(0.09, SKIN); e2.position.set(0.24, 1.03, 0); g.add(e2);
     var a1 = box(0.11, 0.5, 0.11, FUR); a1.position.set(-0.29, 0.5, 0.05); g.add(a1);
@@ -247,21 +339,82 @@ body {
     var l1 = box(0.13, 0.34, 0.13, FUR); l1.position.set(-0.12, 0.17, 0); g.add(l1);
     var l2 = l1.clone(); l2.position.x = 0.12; g.add(l2);
     var tail = box(0.07, 0.07, 0.6, FUR); tail.position.set(0, 0.5, -0.42); tail.rotation.x = 0.7; g.add(tail);
-    g.scale.setScalar(1.15); g.position.set(p[0], 0, p[1]); scene.add(g);
+    g.scale.setScalar(1.15); g.position.set(p[0], hAt(p[0], p[1]), p[1]); scene.add(g);
     return { hx: p[0], hz: p[1], x: p[0], z: p[1], g: g, got: false, speed: MONKEY_SPEED[n], dir: 0, st: 1, wt: 0, walk: false, hop: 0, ph: n * 1.7 };
   });
   window.__monkeys = monkeys;
 
+  // the bear: also built facing +z, walking on all fours
+  var bear = { x: BEAR_START[0], z: BEAR_START[1], dir: Math.PI, hop: 0, stunT: 0, g: new THREE.Group() };
+  (function () {
+    var FUR = 0x4a3222, SNOUT = 0xc9a27a, g = bear.g;
+    var body = box(0.95, 0.85, 1.4, FUR); body.position.y = 0.85; g.add(body);
+    var hd = ball(0.42, FUR); hd.position.set(0, 1.15, 0.85); g.add(hd);
+    var sn = box(0.3, 0.24, 0.3, SNOUT); sn.position.set(0, 1.05, 1.22); g.add(sn);
+    var nose = box(0.12, 0.1, 0.06, 0x1d2a44); nose.position.set(0, 1.12, 1.38); g.add(nose);
+    var y1 = ball(0.05, 0x1d2a44); y1.position.set(-0.17, 1.3, 1.2); g.add(y1);
+    var y2 = ball(0.05, 0x1d2a44); y2.position.set(0.17, 1.3, 1.2); g.add(y2);
+    var e1 = ball(0.14, FUR); e1.position.set(-0.32, 1.5, 0.8); g.add(e1);
+    var e2 = ball(0.14, FUR); e2.position.set(0.32, 1.5, 0.8); g.add(e2);
+    [[-0.33, 0.5], [0.33, 0.5], [-0.33, -0.5], [0.33, -0.5]].forEach(function (p) {
+      var leg = box(0.26, 0.5, 0.26, FUR); leg.position.set(p[0], 0.25, p[1]); g.add(leg);
+    });
+    scene.add(g);
+  })();
+  window.__bear = bear;
+
   var logs = LOG_POS.map(function (p) {       // logs lie along the x axis, 3 m long
     var m = new THREE.Mesh(new THREE.CylinderGeometry(LOG_H / 2, LOG_H / 2, 3, 10), mat(0x8a6240));
-    m.rotation.z = Math.PI / 2; m.position.set(p[0], LOG_H / 2, p[1]); scene.add(m);
+    m.castShadow = true; m.rotation.z = Math.PI / 2; m.position.set(p[0], hAt(p[0], p[1]) + LOG_H / 2, p[1]); scene.add(m);
     return { x: p[0], z: p[1] };
   });
+
+  // healing mushrooms: tan cap, cream stem, a pale ring on the ground so they are easy to spot
+  var mushrooms = MUSH_POS.map(function (p) {
+    var g = new THREE.Group();
+    var stem = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.15, 0.34, 10), mat(0xf4ead2)); stem.position.y = 0.17; stem.castShadow = true; g.add(stem);
+    var capM = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xe8943a)); capM.position.y = 0.3; capM.scale.y = 0.75; capM.castShadow = true; g.add(capM);
+    var under = new THREE.Mesh(new THREE.CircleGeometry(0.34, 14), mat(0xf4ead2)); under.rotation.x = Math.PI / 2; under.position.y = 0.3; g.add(under);
+    var ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 24), new THREE.MeshBasicMaterial({ color: 0xfff3b0, side: THREE.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.06; g.add(ring);
+    g.scale.setScalar(1.5); g.position.set(p[0], hAt(p[0], p[1]), p[1]); scene.add(g);
+    return { x: p[0], z: p[1], g: g, got: false };
+  });
+  window.__mushrooms = mushrooms;
+
+  // scenery: rocks, flowers, far-off mountains and clouds (decoration only; nothing here blocks you)
+  for (i = 0; i < 18; i++) {
+    var ra = rnd() * Math.PI * 2, rr0 = 4 + rnd() * (FIELD_R + 8), rx = Math.cos(ra) * rr0, rz = Math.sin(ra) * rr0, rs = 0.2 + rnd() * 0.25;
+    if (inWater(rx, rz) || onBridge(rx, rz) || near(rx, rz, MUSH_POS, 2.5) || near(rx, rz, LOG_POS, 2.5)) continue;
+    var rock = new THREE.Mesh(new THREE.DodecahedronGeometry(rs, 0), mat(rnd() > 0.5 ? 0x9aa3a8 : 0x858f95));
+    rock.position.set(rx, hAt(rx, rz) + rs * 0.4, rz); rock.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3); rock.castShadow = true; scene.add(rock);
+  }
+  [0xffffff, 0xffd84d, 0xf59ab5].forEach(function (fc) {
+    var fl = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), mat(fc), 110);
+    for (var k = 0; k < 110; k++) {
+      var qa = rnd() * Math.PI * 2, qr = Math.sqrt(rnd()) * (FIELD_R + 4), qx = Math.cos(qa) * qr, qz = Math.sin(qa) * qr;
+      m4.identity(); m4.setPosition(qx, inWater(qx, qz) || onBridge(qx, qz) ? -9 : hAt(qx, qz) + 0.1, qz); fl.setMatrixAt(k, m4);
+    }
+    scene.add(fl);
+  });
+  for (i = 0; i < 16; i++) {
+    var ma = i / 16 * Math.PI * 2 + rnd() * 0.2, mh = 12 + rnd() * 10;
+    var mt = new THREE.Mesh(new THREE.ConeGeometry(26 + rnd() * 16, mh, 6), new THREE.MeshBasicMaterial({ color: i % 2 ? 0xa9c9da : 0xb9d4e2, fog: false }));
+    mt.position.set(Math.cos(ma) * 140, mh / 2 - 1, Math.sin(ma) * 140); scene.add(mt);
+  }
+  var clouds = [];
+  for (i = 0; i < 8; i++) {
+    var cg = new THREE.Group(), ca = rnd() * Math.PI * 2, cr = 120 + rnd() * 45;
+    for (var cn = 0; cn < 4; cn++) {
+      var puff = new THREE.Mesh(new THREE.SphereGeometry(5 + rnd() * 4, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
+      puff.position.set((cn - 1.5) * 6, rnd() * 2, rnd() * 3); puff.scale.y = 0.5; cg.add(puff);
+    }
+    cg.position.set(Math.cos(ca) * cr, 20 + rnd() * 9, Math.sin(ca) * cr); scene.add(cg); clouds.push(cg);
+  }
 
   // character: pivots at hips/shoulders so limbs swing
   var hero = new THREE.Group();
   var torso = box(0.5, 0.6, 0.3, 0xf2603a); torso.position.y = 1.05; hero.add(torso);
-  var head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat(0xf3c9a5)); head.position.y = 1.6; hero.add(head);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat(0xf3c9a5)); head.position.y = 1.6; head.castShadow = true; hero.add(head);
   var cap = box(0.5, 0.1, 0.5, 0x1d2a44); cap.position.y = 1.8; hero.add(cap);
   var brim = box(0.4, 0.06, 0.25, 0x1d2a44); brim.position.set(0, 1.77, -0.33); hero.add(brim);
   function limb(x, y, len, w, c) {
@@ -272,7 +425,7 @@ body {
   var armL = limb(-0.33, 1.3, 0.55, 0.13, 0xf3c9a5), armR = limb(0.33, 1.3, 0.55, 0.13, 0xf3c9a5);
   scene.add(hero);
   var shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 20), new THREE.MeshBasicMaterial({ color: 0x1d2a44, transparent: true, opacity: 0.25 }));
-  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.04; scene.add(shadow);
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.04; shadow.visible = false; scene.add(shadow);   // replaced by real shadows
 
   function resize() {
     var w = view.clientWidth, h = view.clientHeight;
@@ -284,7 +437,7 @@ body {
 
   // ---------- game state ----------
   // h = heading in radians (0 faces "into" the screen at the start, positive = turned left); ch = camera heading, which follows h
-  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0 };
+  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0, bearT: 0, life: LIVES, safeT: 0, hitT: -1000, kx: 0, kz: 0, cy: 0, mushT: 0 };
   var steer = 1;           // +1: dragging right turns left ("opposite of the kick"); -1: dragging right turns right
   try { if (localStorage.getItem('yubiwalk-steer') === 'same') steer = -1; } catch (err) {}
   var btnSteer = $('btnSteer');
@@ -306,8 +459,10 @@ body {
   }
 
   function reset() {
-    G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0;
+    G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0; G.life = LIVES; G.safeT = 0; G.hitT = -1000; G.kx = 0; G.kz = 0; G.cy = 0;
     monkeys.forEach(function (m) { m.got = false; m.g.visible = true; m.x = m.hx; m.z = m.hz; m.st = 1; m.wt = 0; });
+    bear.x = BEAR_START[0]; bear.z = BEAR_START[1]; bear.dir = Math.PI; bear.hop = 0; bear.stunT = 0;
+    mushrooms.forEach(function (u) { u.got = false; u.g.visible = true; });
     lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
@@ -397,20 +552,26 @@ body {
   $('btnStart').addEventListener('click', begin);
   $('btnRetry').addEventListener('click', begin);
 
+  function lose() {
+    G.state = 'goal'; G.running = false;
+    $('gTitle').textContent = 'クマにやられた…'; $('gTime').textContent = G.time.toFixed(2);
+    $('gNote').textContent = 'サルを' + G.got + '匹捕まえたところで、ライフがなくなりました。'; $('goal').hidden = false;
+  }
   function finish() {
     G.state = 'goal'; G.running = false;
+    $('gTitle').textContent = 'サルをぜんぶ捕まえた！';
     var best = null;
-    try { best = parseFloat(localStorage.getItem('yubiwalk-monkey-best')); } catch (err) {}
+    try { best = parseFloat(localStorage.getItem('yubiwalk-bear-best')); } catch (err) {}
     var note = G.steps + '歩で捕まえました。';
     if (!(best > 0) || G.time < best) {
       note += (best > 0) ? ' 自己ベスト更新です（これまで ' + best.toFixed(2) + ' 秒）。' : ' これが最初の記録です。';
-      try { localStorage.setItem('yubiwalk-monkey-best', String(G.time)); } catch (err) {}
+      try { localStorage.setItem('yubiwalk-bear-best', String(G.time)); } catch (err) {}
     } else note += ' 自己ベストは ' + best.toFixed(2) + ' 秒です。';
     $('gTime').textContent = G.time.toFixed(2); $('gNote').textContent = note; $('goal').hidden = false;
   }
 
   // ---------- loop ----------
-  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSteps = $('hSteps'), hSpeed = $('hSpeed');
+  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSpeed = $('hSpeed'), hBear = $('hBear'), hBArrow = $('hBArrow'), cBear = $('cBear'), dangerEl = $('danger'), hLife = $('hLife');
   var last = performance.now();
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -426,7 +587,9 @@ body {
       if (G.v < 0.02) G.v = 0;
 
       var fx = -Math.sin(G.h), fz = -Math.cos(G.h);    // forward direction
-      var nx = G.x + fx * G.v * dt, nz = G.z + fz * G.v * dt;
+      if (G.y === 0 && inWater(G.x, G.z)) G.v = Math.min(G.v, WADE_V);   // wading is slow
+      var nx = G.x + (fx * G.v + G.kx) * dt, nz = G.z + (fz * G.v + G.kz) * dt;   // kx, kz: being thrown by a hit
+      var kd = Math.exp(-6 * dt); G.kx *= kd; G.kz *= kd;
 
       logs.forEach(function (l) {                      // crossing a log on the ground trips you
         if ((G.z - l.z) * (nz - l.z) < 0 && Math.abs(nx - l.x) < 1.5 && G.y < LOG_H && now - G.tripT > 600) {
@@ -462,14 +625,40 @@ body {
           if (m.wt <= 0) { m.wt = 1 + Math.random() * 3; m.dir = Math.random() * Math.PI * 2; m.walk = Math.random() > 0.4; }
           sp = m.walk ? 0.8 : 0;
         }
+        if (inWater(m.x, m.z)) sp *= WATER_SLOW;
         var mx = m.x + Math.sin(m.dir) * sp * dt, mz = m.z + Math.cos(m.dir) * sp * dt;
         var mr = Math.hypot(mx, mz), lim = FIELD_R - 1;
         if (mr > lim) { mx *= lim / mr; mz *= lim / mr; }   // the fence stops monkeys too, so you can corner them
         m.x = mx; m.z = mz; m.hop += dt * sp * 4;
-        m.g.position.set(m.x, sp > 0 ? Math.abs(Math.sin(m.hop)) * 0.25 : 0, m.z);
+        m.g.position.set(m.x, groundY(m.x, m.z) + (sp > 0 ? Math.abs(Math.sin(m.hop)) * 0.25 : 0), m.z);
         m.g.rotation.y = m.dir;
       });
+      mushrooms.forEach(function (u) {               // a mushroom gives one life back, but only if you are missing one
+        if (u.got || Math.hypot(u.x - G.x, u.z - G.z) > 1.1) return;
+        if (G.life < LIVES) { u.got = true; u.g.visible = false; G.life++; toast('キノコで回復！ ライフ +1'); }
+        else if (now - G.mushT > 3000) { G.mushT = now; toast('ライフは満タン'); }
+      });
       if (G.got >= monkeys.length) finish();
+
+      if (G.state === 'play' && G.running) {           // the bear walks straight at you once you have started moving
+        var bdx = G.x - bear.x, bdz = G.z - bear.z, bd = Math.hypot(bdx, bdz);
+        if (bd < BEAR_R && now > G.safeT) {            // the bear hits you: lose a life and get thrown away from it
+          G.life--; G.hitT = now;
+          if (G.life <= 0) lose();
+          else {
+            var kn = bd > 0.01 ? 1 / bd : 0;
+            G.kx = (kn ? bdx * kn : fx) * KNOCK_V; G.kz = (kn ? bdz * kn : fz) * KNOCK_V;
+            G.v = 0; G.vy = 3.2; G.y = 0.0001;
+            G.safeT = now + SAFE_MS; bear.stunT = now + STUN_MS;
+            toast('クマになぐられた！ ライフ −1');
+          }
+        } else if (now > bear.stunT && bd > 0.01) {
+          var bs = BEAR_SPEED + BEAR_GAIN * G.got;
+          if (inWater(bear.x, bear.z)) bs *= WATER_SLOW;
+          bear.dir = Math.atan2(bdx, bdz); bear.x += bdx / bd * bs * dt; bear.z += bdz / bd * bs * dt; bear.hop += dt * bs * 3;
+          if (bd < BEAR_NEAR - 2 && now - G.bearT > 2500 && now > G.safeT) { G.bearT = now; toast('クマが近い！'); }
+        }
+      }
     } else if (G.state === 'goal') G.v -= G.v * 3 * dt;
 
     // nearest remaining monkey: arrow and distance
@@ -480,6 +669,16 @@ body {
       hArrow.style.transform = 'rotate(' + (-rel).toFixed(3) + 'rad)'; hFar.textContent = Math.round(bestD);
     } else hFar.textContent = '0';
 
+    // bear: model, arrow, distance, red warning
+    bear.g.position.set(bear.x, groundY(bear.x, bear.z) + Math.abs(Math.sin(bear.hop)) * 0.12, bear.z); bear.g.rotation.y = bear.dir;
+    var bdist = Math.hypot(bear.x - G.x, bear.z - G.z), brel = Math.atan2(-(bear.x - G.x), -(bear.z - G.z)) - G.h;
+    hBArrow.style.transform = 'rotate(' + (-brel).toFixed(3) + 'rad)'; hBear.textContent = Math.round(bdist);
+    cBear.classList.toggle('danger', bdist < BEAR_NEAR);
+    var dng = (G.state === 'play' && G.running) ? Math.max(0, Math.min(1, (BEAR_NEAR - bdist) / (BEAR_NEAR - BEAR_R))) : 0;
+    if (now - G.hitT < 300) dng = 1; else dng *= 0.75 + 0.25 * Math.sin(now / 120);   // red screen edge: stronger as the bear closes in, full flash on a hit
+    dangerEl.style.opacity = dng.toFixed(2);
+    hLife.textContent = '♥♥♥♥♥'.slice(0, Math.max(0, G.life)) + '♡♡♡♡♡'.slice(0, LIVES - Math.max(0, G.life));
+
     // pose
     var moving = G.v > 0.15, amp = moving ? 0.3 + 0.6 * Math.min(1, G.v / 5) : 0;
     var target = G.side * amp, k = Math.min(1, dt * 18);
@@ -487,18 +686,33 @@ body {
     else { legL.rotation.x += (target - legL.rotation.x) * k; legR.rotation.x += (-target - legR.rotation.x) * k; }
     armL.rotation.x += (-target * 0.8 - armL.rotation.x) * k; armR.rotation.x += (target * 0.8 - armR.rotation.x) * k;
     G.bounce = Math.max(0, G.bounce - dt * 6);
-    hero.position.set(G.x, G.y + 0.05 * G.bounce, G.z);
+    var gy = groundY(G.x, G.z);
+    hero.position.set(G.x, gy + G.y + 0.05 * G.bounce, G.z);
+    hero.visible = !(G.state === 'play' && now < G.safeT && Math.floor(now / 100) % 2);   // blink while you cannot be hit
     hero.rotation.y = G.h;
-    shadow.position.set(G.x, 0.04, G.z); shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
+    shadow.position.set(G.x, gy + 0.04, G.z); shadow.scale.setScalar(1 - Math.min(0.5, G.y * 0.5));
 
     // camera sits behind and above, and swings round a little later than the character turns
     G.ch += (G.h - G.ch) * Math.min(1, dt * 5);
     var cx = -Math.sin(G.ch), cz = -Math.cos(G.ch);
-    camera.position.set(G.x - cx * 4.4, 3.3, G.z - cz * 4.4);
-    camera.lookAt(G.x + cx * 3.5, 0.9, G.z + cz * 3.5);
+    G.cy += (gy - G.cy) * Math.min(1, dt * 6);          // follow the ground height smoothly
+    var camX = G.x - cx * 4.4, camZ = G.z - cz * 4.4;
+    camera.position.set(camX, Math.max(G.cy + 3.3, hAt(camX, camZ) + 1.4), camZ);   // never sink into a hill behind you
+    camera.lookAt(G.x + cx * 3.5, G.cy + 0.9, G.z + cz * 3.5);
+    trees.forEach(function (t) {                       // hide any tree standing between the camera and you, so it cannot block the view
+      var sx = G.x - camX, sz = G.z - camZ, u = ((t.x - camX) * sx + (t.z - camZ) * sz) / (sx * sx + sz * sz);
+      u = Math.max(-0.4, Math.min(1, u));
+      t.g.visible = Math.hypot(t.x - (camX + sx * u), t.z - (camZ + sz * u)) > t.r + 1.3;
+    });
 
-    hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2); hSteps.textContent = G.steps;
+    hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2);
     hSpeed.style.width = (100 * G.v / VMAX).toFixed(1) + '%';
+
+    // the sun (and the area its shadows cover) follows you; mushrooms turn, clouds drift, water shimmers
+    sun.position.set(G.x + 10, 22, G.z + 8); sun.target.position.set(G.x, 0, G.z); sun.target.updateMatrixWorld();
+    mushrooms.forEach(function (u) { u.g.rotation.y += dt * 1.2; });
+    clouds.forEach(function (cg) { cg.position.x += dt * 0.6; if (cg.position.x > 170) cg.position.x = -170; });
+    waterMat.opacity = 0.78 + 0.05 * Math.sin(now / 700);
 
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
