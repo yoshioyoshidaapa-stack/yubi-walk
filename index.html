@@ -60,7 +60,9 @@ body {
   font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .chip b { font-weight: 800; font-size: 16px; }
-#hArrow { display: inline-block; color: var(--accent); font-size: 15px; margin-right: 4px; }
+#hArrow, #hBArrow { display: inline-block; color: var(--accent); font-size: 15px; margin-right: 4px; }
+.chip.danger { background: var(--accent); color: var(--panel); }
+.chip.danger #hBArrow { color: var(--panel); }
 #btnSteer {
   position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 16px;
   font: inherit; font-size: 13px; font-weight: 800; color: var(--ink); background: var(--panel);
@@ -111,9 +113,9 @@ body {
     <canvas id="c"></canvas>
     <div class="hud">
       <span class="chip">サル <b id="hFlags">0</b> / 5</span>
-      <span class="chip"><span id="hArrow">▲</span><b id="hFar">0</b> m</span>
+      <span class="chip">サルまで <span id="hArrow">▲</span><b id="hFar">0</b> m</span>
       <span class="chip"><b id="hTime">0.00</b> 秒</span>
-      <span class="chip"><b id="hSteps">0</b> 歩</span>
+      <span class="chip" id="cBear">クマ <span id="hBArrow">▲</span><b id="hBear">0</b> m</span>
     </div>
     <button id="btnSteer" type="button">曲がり方: 蹴った逆へ</button>
     <div class="speed"><i id="hSpeed"></i></div>
@@ -128,12 +130,13 @@ body {
   <div id="start" class="overlay">
     <div class="card">
       <h1>ゆびウォーク</h1>
-      <p>スマホを机に置いて、人差し指と中指を足のように動かします。広場を逃げ回るサルを5匹、ぜんぶ捕まえるまでのタイムを計ります。</p>
+      <p>スマホを机に置いて、人差し指と中指を足のように動かします。うしろから追ってくるクマから逃げながら、広場のサルを5匹ぜんぶ捕まえるまでのタイムを計ります。</p>
       <ul>
         <li><b>歩く</b>「左足」「右足」の枠に指を置いて、手前（画面の下のほう）へ引く。左右交互に。</li>
         <li><b>曲がる</b>ななめに引く。右ななめ手前に引くと左へ、左ななめ手前に引くと右へ曲がります（左下のボタンで逆にできます）。</li>
         <li><b>ジャンプ</b>2本とも置いてから、そろえてパッと離す。丸太をとびこえます。</li>
         <li><b>捕まえる</b>サルにさわれば捕まえられます。近づくと逃げますが、追い続けると疲れて遅くなります。柵に追いつめるのも手です。</li>
+        <li><b>クマ</b>歩き始めるとクマが追ってきます。さわられたら終わりです。サルを捕まえるたびに少し速くなります。上の「クマ」の ▲ と数字が方向と距離で、近づくと赤くなります。</li>
         <li><b>サルの場所</b>上の ▲ がいちばん近いサルの方向、数字が距離です。</li>
       </ul>
       <p>パソコンでは F・J キーを交互に、A・D キーで曲がる、スペースでジャンプ。</p>
@@ -143,7 +146,7 @@ body {
 
   <div id="goal" class="overlay" hidden>
     <div class="card">
-      <h1>サルをぜんぶ捕まえた！</h1>
+      <h1 id="gTitle">サルをぜんぶ捕まえた！</h1>
       <div class="big"><span id="gTime">0.00</span> 秒</div>
       <p id="gNote"></p>
       <button id="btnRetry" type="button">もう一度</button>
@@ -183,6 +186,11 @@ body {
   var MONKEY_SEE = 9;      // a monkey starts fleeing when you are closer than this (m)
   var MONKEY_TIRE = 5;     // seconds of fleeing until a monkey is fully tired (it then runs at 55% speed)
   var CATCH_R = 1.2;       // touch distance that counts as a catch (m)
+  var BEAR_START = [0, 30]; // where the bear starts: 30 m behind you
+  var BEAR_SPEED = 2.2;    // bear speed (m/s); it never tires. Your own steady pace is about 3.5
+  var BEAR_GAIN = 0.1;     // the bear gets this much faster for every monkey you catch
+  var BEAR_R = 1.4;        // if the bear gets this close, you are caught (m)
+  var BEAR_NEAR = 8;       // the bear readout turns red inside this distance (m)
   var LOG_POS = [[3, -9], [-11, -19], [15, -9], [-6, 9], [10, 16], [-22, -8]];
 
   // ---------- scene ----------
@@ -252,6 +260,23 @@ body {
   });
   window.__monkeys = monkeys;
 
+  // the bear: also built facing +z, walking on all fours
+  var bear = { x: BEAR_START[0], z: BEAR_START[1], dir: Math.PI, hop: 0, g: new THREE.Group() };
+  (function () {
+    var FUR = 0x4a3222, SNOUT = 0xc9a27a, g = bear.g;
+    var body = box(0.95, 0.85, 1.4, FUR); body.position.y = 0.85; g.add(body);
+    var hd = ball(0.42, FUR); hd.position.set(0, 1.15, 0.85); g.add(hd);
+    var sn = box(0.3, 0.24, 0.3, SNOUT); sn.position.set(0, 1.05, 1.22); g.add(sn);
+    var nose = box(0.12, 0.1, 0.06, 0x1d2a44); nose.position.set(0, 1.12, 1.38); g.add(nose);
+    var e1 = ball(0.14, FUR); e1.position.set(-0.32, 1.5, 0.8); g.add(e1);
+    var e2 = ball(0.14, FUR); e2.position.set(0.32, 1.5, 0.8); g.add(e2);
+    [[-0.33, 0.5], [0.33, 0.5], [-0.33, -0.5], [0.33, -0.5]].forEach(function (p) {
+      var leg = box(0.26, 0.5, 0.26, FUR); leg.position.set(p[0], 0.25, p[1]); g.add(leg);
+    });
+    scene.add(g);
+  })();
+  window.__bear = bear;
+
   var logs = LOG_POS.map(function (p) {       // logs lie along the x axis, 3 m long
     var m = new THREE.Mesh(new THREE.CylinderGeometry(LOG_H / 2, LOG_H / 2, 3, 10), mat(0x8a6240));
     m.rotation.z = Math.PI / 2; m.position.set(p[0], LOG_H / 2, p[1]); scene.add(m);
@@ -284,7 +309,7 @@ body {
 
   // ---------- game state ----------
   // h = heading in radians (0 faces "into" the screen at the start, positive = turned left); ch = camera heading, which follows h
-  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0 };
+  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0, bearT: 0 };
   var steer = 1;           // +1: dragging right turns left ("opposite of the kick"); -1: dragging right turns right
   try { if (localStorage.getItem('yubiwalk-steer') === 'same') steer = -1; } catch (err) {}
   var btnSteer = $('btnSteer');
@@ -308,6 +333,7 @@ body {
   function reset() {
     G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0;
     monkeys.forEach(function (m) { m.got = false; m.g.visible = true; m.x = m.hx; m.z = m.hz; m.st = 1; m.wt = 0; });
+    bear.x = BEAR_START[0]; bear.z = BEAR_START[1]; bear.dir = Math.PI; bear.hop = 0;
     lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
@@ -397,20 +423,26 @@ body {
   $('btnStart').addEventListener('click', begin);
   $('btnRetry').addEventListener('click', begin);
 
+  function lose() {
+    G.state = 'goal'; G.running = false;
+    $('gTitle').textContent = 'クマに捕まった…'; $('gTime').textContent = G.time.toFixed(2);
+    $('gNote').textContent = 'サルを' + G.got + '匹捕まえたところで、クマに追いつかれました。'; $('goal').hidden = false;
+  }
   function finish() {
     G.state = 'goal'; G.running = false;
+    $('gTitle').textContent = 'サルをぜんぶ捕まえた！';
     var best = null;
-    try { best = parseFloat(localStorage.getItem('yubiwalk-monkey-best')); } catch (err) {}
+    try { best = parseFloat(localStorage.getItem('yubiwalk-bear-best')); } catch (err) {}
     var note = G.steps + '歩で捕まえました。';
     if (!(best > 0) || G.time < best) {
       note += (best > 0) ? ' 自己ベスト更新です（これまで ' + best.toFixed(2) + ' 秒）。' : ' これが最初の記録です。';
-      try { localStorage.setItem('yubiwalk-monkey-best', String(G.time)); } catch (err) {}
+      try { localStorage.setItem('yubiwalk-bear-best', String(G.time)); } catch (err) {}
     } else note += ' 自己ベストは ' + best.toFixed(2) + ' 秒です。';
     $('gTime').textContent = G.time.toFixed(2); $('gNote').textContent = note; $('goal').hidden = false;
   }
 
   // ---------- loop ----------
-  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSteps = $('hSteps'), hSpeed = $('hSpeed');
+  var hFlags = $('hFlags'), hFar = $('hFar'), hArrow = $('hArrow'), hTime = $('hTime'), hSpeed = $('hSpeed'), hBear = $('hBear'), hBArrow = $('hBArrow'), cBear = $('cBear');
   var last = performance.now();
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -470,6 +502,16 @@ body {
         m.g.rotation.y = m.dir;
       });
       if (G.got >= monkeys.length) finish();
+
+      if (G.state === 'play' && G.running) {           // the bear walks straight at you once you have started moving
+        var bdx = G.x - bear.x, bdz = G.z - bear.z, bd = Math.hypot(bdx, bdz);
+        if (bd < BEAR_R) lose();
+        else {
+          var bs = BEAR_SPEED + BEAR_GAIN * G.got;
+          bear.dir = Math.atan2(bdx, bdz); bear.x += bdx / bd * bs * dt; bear.z += bdz / bd * bs * dt; bear.hop += dt * bs * 3;
+          if (bd < BEAR_NEAR && now - G.bearT > 2500) { G.bearT = now; toast('クマが近い！'); }
+        }
+      }
     } else if (G.state === 'goal') G.v -= G.v * 3 * dt;
 
     // nearest remaining monkey: arrow and distance
@@ -479,6 +521,12 @@ body {
       var rel = Math.atan2(-(bf.x - G.x), -(bf.z - G.z)) - G.h;   // positive = monkey is to the left
       hArrow.style.transform = 'rotate(' + (-rel).toFixed(3) + 'rad)'; hFar.textContent = Math.round(bestD);
     } else hFar.textContent = '0';
+
+    // bear: model, arrow, distance, red warning
+    bear.g.position.set(bear.x, Math.abs(Math.sin(bear.hop)) * 0.12, bear.z); bear.g.rotation.y = bear.dir;
+    var bdist = Math.hypot(bear.x - G.x, bear.z - G.z), brel = Math.atan2(-(bear.x - G.x), -(bear.z - G.z)) - G.h;
+    hBArrow.style.transform = 'rotate(' + (-brel).toFixed(3) + 'rad)'; hBear.textContent = Math.round(bdist);
+    cBear.classList.toggle('danger', bdist < BEAR_NEAR);
 
     // pose
     var moving = G.v > 0.15, amp = moving ? 0.3 + 0.6 * Math.min(1, G.v / 5) : 0;
@@ -497,7 +545,7 @@ body {
     camera.position.set(G.x - cx * 4.4, 3.3, G.z - cz * 4.4);
     camera.lookAt(G.x + cx * 3.5, 0.9, G.z + cz * 3.5);
 
-    hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2); hSteps.textContent = G.steps;
+    hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2);
     hSpeed.style.width = (100 * G.v / VMAX).toFixed(1) + '%';
 
     renderer.render(scene, camera);
