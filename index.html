@@ -143,6 +143,7 @@ body {
         <li><b>捕まえる</b>サルにさわれば捕まえられます。近づくと逃げますが、追い続けると疲れて遅くなります。柵に追いつめるのも手です。</li>
         <li><b>クマ</b>歩き始めるとクマが追ってきます。なぐられるとふっとばされて、ライフ（♥）が1つ減ります。3つなくなると終わりです。クマが近づくと画面のふちが赤くなります。</li>
         <li><b>川と橋</b>川の中はゆっくりしか歩けません（クマもサルも同じ）。橋の上なら普通に渡れます。</li>
+        <li><b>キノコ</b>広場に3本生えています。さわるとライフが1つ回復します（満タンのときは取れません）。</li>
         <li><b>サルの場所</b>上の ▲ がいちばん近いサルの方向、数字が距離です。</li>
       </ul>
       <p>パソコンでは F・J キーを交互に、A・D キーで曲がる、スペースでジャンプ。</p>
@@ -198,6 +199,7 @@ body {
   var BEAR_R = 1.4;        // if the bear gets this close, you are caught (m)
   var BEAR_NEAR = 10;      // the screen edge starts to glow red and the bear readout turns red inside this distance (m)
   var LIVES = 3;           // hits you can take
+  var MUSH_POS = [[-8, -4], [20, -18], [-18, 26]];   // healing mushrooms: each restores one life
   var KNOCK_V = 14;        // how hard a hit throws you (m/s at first; you land about 2.3 m away)
   var SAFE_MS = 2000;      // after a hit you cannot be hit again for this long
   var STUN_MS = 1500;      // after hitting you the bear stands still for this long
@@ -216,15 +218,24 @@ body {
   try { renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true }); }
   catch (err) { fail('この画面では3D表示(WebGL)が使えませんでした: ' + (err && err.message ? err.message : err)); return; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   var scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xbfe3f2);
-  scene.fog = new THREE.Fog(0xbfe3f2, 30, 85);
+  // sky: deeper blue overhead fading to a pale haze at the horizon; the fog uses the same haze colour so the ground melts into it
+  var skyC = document.createElement('canvas'); skyC.width = 2; skyC.height = 256;
+  var skyG = skyC.getContext('2d'), grd = skyG.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, '#5fa9e6'); grd.addColorStop(0.17, '#d3ecf4'); grd.addColorStop(1, '#d3ecf4');
+  skyG.fillStyle = grd; skyG.fillRect(0, 0, 2, 256);
+  scene.background = new THREE.CanvasTexture(skyC);
+  scene.fog = new THREE.Fog(0xd3ecf4, 34, 95);
   var camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x6f9a5c, 0.95));
-  var sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(4, 10, 6); scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x6f9a5c, 0.8));
+  var sun = new THREE.DirectionalLight(0xfff1d6, 0.75); scene.add(sun); scene.add(sun.target);   // warm sunlight that casts real shadows
+  sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0006;
+  sun.shadow.camera.left = -22; sun.shadow.camera.right = 22; sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -22;
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
 
   function mat(c) { return new THREE.MeshLambertMaterial({ color: c }); }
-  function box(w, h, d, c) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); }
+  function box(w, h, d, c) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); m.castShadow = true; return m; }
   var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
 
   // ---------- terrain ----------
@@ -244,9 +255,20 @@ body {
 
   var gg = new THREE.PlaneGeometry(220, 220, 176, 176); gg.rotateX(-Math.PI / 2);
   var gp = gg.attributes.position, i;
-  for (i = 0; i < gp.count; i++) gp.setY(i, hAt(gp.getX(i), gp.getZ(i)));
+  // colour the ground point by point: patchy grass, paler on the hilltops, sand on the river banks, mud on the river bed
+  var gcol = new Float32Array(gp.count * 3), tc = new THREE.Color();
+  var C_GRASS = new THREE.Color(0x7fbf6a), C_GRASS2 = new THREE.Color(0x63a653), C_HIGH = new THREE.Color(0xb1d684), C_SAND = new THREE.Color(0xe6d6a3), C_BED = new THREE.Color(0x8d8462);
+  for (i = 0; i < gp.count; i++) {
+    var vx = gp.getX(i), vz = gp.getZ(i), vy = hAt(vx, vz), vd = Math.abs(vz - riverZ(vx));
+    gp.setY(i, vy);
+    var patch = 0.5 + 0.5 * Math.sin(vx * 0.35 + Math.sin(vz * 0.27) * 2) * Math.cos(vz * 0.31 + vx * 0.11);
+    tc.copy(C_GRASS).lerp(C_GRASS2, patch * 0.85).lerp(C_HIGH, Math.max(0, Math.min(1, vy / 3.5)));
+    tc.lerp(C_SAND, 1 - smooth((vd - RIVER_W - 0.2) / 1.8)).lerp(C_BED, 1 - smooth((vd - RIVER_W + 1.3) / 1.0));
+    gcol[i * 3] = tc.r; gcol[i * 3 + 1] = tc.g; gcol[i * 3 + 2] = tc.b;
+  }
+  gg.setAttribute('color', new THREE.BufferAttribute(gcol, 3));
   gg.computeVertexNormals();
-  scene.add(new THREE.Mesh(gg, mat(0x7fbf6a)));
+  var groundMesh = new THREE.Mesh(gg, new THREE.MeshLambertMaterial({ vertexColors: true })); groundMesh.receiveShadow = true; scene.add(groundMesh);
 
   var wv = [], wi = [], wn = 0;                         // the water: a ribbon that follows the river
   for (var wx = -110; wx <= 110; wx += 2) {
@@ -255,11 +277,12 @@ body {
     wn++;
   }
   var wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wv, 3)); wg.setIndex(wi);
-  scene.add(new THREE.Mesh(wg, new THREE.MeshBasicMaterial({ color: 0x4fb3de, transparent: true, opacity: 0.8, side: THREE.DoubleSide })));
+  var waterMat = new THREE.MeshBasicMaterial({ color: 0x4fb3de, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+  scene.add(new THREE.Mesh(wg, waterMat));
 
   BRIDGE_X.forEach(function (bx) {
     var bz = riverZ(bx), L = BRIDGE_HALF_L * 2;
-    var deck = box(BRIDGE_HALF_W * 2, 0.2, L, 0xb98a55); deck.position.set(bx, DECK_Y - 0.1, bz); scene.add(deck);
+    var deck = box(BRIDGE_HALF_W * 2, 0.2, L, 0xb98a55); deck.position.set(bx, DECK_Y - 0.1, bz); deck.castShadow = false; deck.receiveShadow = true; scene.add(deck);
     [-1, 1].forEach(function (sd) {
       var rail = box(0.12, 0.12, L, 0x8a6240); rail.position.set(bx + sd * BRIDGE_HALF_W, DECK_Y + 0.7, bz); scene.add(rail);
       for (var k = -2; k <= 2; k++) { var pp = box(0.14, 0.8, 0.14, 0x8a6240); pp.position.set(bx + sd * BRIDGE_HALF_W, DECK_Y + 0.3, bz + k * L / 4.2); scene.add(pp); }
@@ -288,22 +311,27 @@ body {
   for (i = 0; i < 70; i++) {
     var ta = rnd() * Math.PI * 2, tr = 5 + rnd() * (FIELD_R + 14), tx = Math.cos(ta) * tr, tz = Math.sin(ta) * tr, s = 0.8 + rnd() * 0.9;
     var leafC = rnd() > 0.5 ? 0x3f8f58 : 0x55a567;
-    if (near(tx, tz, LOG_POS, 3.5) || Math.abs(tz - riverZ(tx)) < RIVER_W + 2.5 || near(tx, tz, BRIDGE_X.map(function (bx) { return [bx, riverZ(bx)]; }), 9)) continue;
+    if (near(tx, tz, LOG_POS, 3.5) || near(tx, tz, MUSH_POS, 3) || Math.abs(tz - riverZ(tx)) < RIVER_W + 2.5 || near(tx, tz, BRIDGE_X.map(function (bx) { return [bx, riverZ(bx)]; }), 9)) continue;
     var t = new THREE.Group();
     var trunk = box(0.28, 1, 0.28, 0x8a6240); trunk.position.y = 0.5; t.add(trunk);
-    var leaf = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 7), mat(leafC)); leaf.position.y = 2; t.add(leaf);
+    [[1.05, 1.5, 1.55], [0.8, 1.3, 2.35], [0.52, 1.1, 3.1]].forEach(function (q, n) {   // three stacked tiers of leaves
+      var leaf = new THREE.Mesh(new THREE.ConeGeometry(q[0], q[1], 8), mat(n === 1 ? leafC : (leafC === 0x3f8f58 ? 0x37804e : 0x4c995d)));
+      leaf.position.y = q[2]; leaf.castShadow = true; t.add(leaf);
+    });
     t.scale.setScalar(s); t.position.set(tx, hAt(tx, tz) - 0.1, tz); scene.add(t);
-    trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3 });
+    trees.push({ x: tx, z: tz, r: 0.45 * s + 0.3, g: t });
   }
 
   // monkeys: built facing +z, so rotation.y = dir makes them face the way they run
-  function ball(r, c) { return new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat(c)); }
+  function ball(r, c) { var m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat(c)); m.castShadow = true; return m; }
   var monkeys = MONKEY_POS.map(function (p, n) {
     var g = new THREE.Group(), FUR = 0x8b5a2b, SKIN = 0xf0cfa0;
     var body = box(0.42, 0.46, 0.34, FUR); body.position.y = 0.55; g.add(body);
     var belly = box(0.26, 0.3, 0.05, SKIN); belly.position.set(0, 0.55, 0.16); g.add(belly);
     var hd = ball(0.23, FUR); hd.position.y = 1.0; g.add(hd);
     var face = ball(0.16, SKIN); face.position.set(0, 0.97, 0.12); g.add(face);
+    var y1 = ball(0.035, 0x1d2a44); y1.position.set(-0.07, 1.02, 0.26); g.add(y1);
+    var y2 = ball(0.035, 0x1d2a44); y2.position.set(0.07, 1.02, 0.26); g.add(y2);
     var e1 = ball(0.09, SKIN); e1.position.set(-0.24, 1.03, 0); g.add(e1);
     var e2 = ball(0.09, SKIN); e2.position.set(0.24, 1.03, 0); g.add(e2);
     var a1 = box(0.11, 0.5, 0.11, FUR); a1.position.set(-0.29, 0.5, 0.05); g.add(a1);
@@ -324,6 +352,8 @@ body {
     var hd = ball(0.42, FUR); hd.position.set(0, 1.15, 0.85); g.add(hd);
     var sn = box(0.3, 0.24, 0.3, SNOUT); sn.position.set(0, 1.05, 1.22); g.add(sn);
     var nose = box(0.12, 0.1, 0.06, 0x1d2a44); nose.position.set(0, 1.12, 1.38); g.add(nose);
+    var y1 = ball(0.05, 0x1d2a44); y1.position.set(-0.17, 1.3, 1.2); g.add(y1);
+    var y2 = ball(0.05, 0x1d2a44); y2.position.set(0.17, 1.3, 1.2); g.add(y2);
     var e1 = ball(0.14, FUR); e1.position.set(-0.32, 1.5, 0.8); g.add(e1);
     var e2 = ball(0.14, FUR); e2.position.set(0.32, 1.5, 0.8); g.add(e2);
     [[-0.33, 0.5], [0.33, 0.5], [-0.33, -0.5], [0.33, -0.5]].forEach(function (p) {
@@ -335,14 +365,56 @@ body {
 
   var logs = LOG_POS.map(function (p) {       // logs lie along the x axis, 3 m long
     var m = new THREE.Mesh(new THREE.CylinderGeometry(LOG_H / 2, LOG_H / 2, 3, 10), mat(0x8a6240));
-    m.rotation.z = Math.PI / 2; m.position.set(p[0], hAt(p[0], p[1]) + LOG_H / 2, p[1]); scene.add(m);
+    m.castShadow = true; m.rotation.z = Math.PI / 2; m.position.set(p[0], hAt(p[0], p[1]) + LOG_H / 2, p[1]); scene.add(m);
     return { x: p[0], z: p[1] };
   });
+
+  // healing mushrooms: tan cap, cream stem, a pale ring on the ground so they are easy to spot
+  var mushrooms = MUSH_POS.map(function (p) {
+    var g = new THREE.Group();
+    var stem = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.15, 0.34, 10), mat(0xf4ead2)); stem.position.y = 0.17; stem.castShadow = true; g.add(stem);
+    var capM = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xe8943a)); capM.position.y = 0.3; capM.scale.y = 0.75; capM.castShadow = true; g.add(capM);
+    var under = new THREE.Mesh(new THREE.CircleGeometry(0.34, 14), mat(0xf4ead2)); under.rotation.x = Math.PI / 2; under.position.y = 0.3; g.add(under);
+    var ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 24), new THREE.MeshBasicMaterial({ color: 0xfff3b0, side: THREE.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.06; g.add(ring);
+    g.scale.setScalar(1.5); g.position.set(p[0], hAt(p[0], p[1]), p[1]); scene.add(g);
+    return { x: p[0], z: p[1], g: g, got: false };
+  });
+  window.__mushrooms = mushrooms;
+
+  // scenery: rocks, flowers, far-off mountains and clouds (decoration only; nothing here blocks you)
+  for (i = 0; i < 18; i++) {
+    var ra = rnd() * Math.PI * 2, rr0 = 4 + rnd() * (FIELD_R + 8), rx = Math.cos(ra) * rr0, rz = Math.sin(ra) * rr0, rs = 0.2 + rnd() * 0.25;
+    if (inWater(rx, rz) || onBridge(rx, rz) || near(rx, rz, MUSH_POS, 2.5) || near(rx, rz, LOG_POS, 2.5)) continue;
+    var rock = new THREE.Mesh(new THREE.DodecahedronGeometry(rs, 0), mat(rnd() > 0.5 ? 0x9aa3a8 : 0x858f95));
+    rock.position.set(rx, hAt(rx, rz) + rs * 0.4, rz); rock.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3); rock.castShadow = true; scene.add(rock);
+  }
+  [0xffffff, 0xffd84d, 0xf59ab5].forEach(function (fc) {
+    var fl = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), mat(fc), 110);
+    for (var k = 0; k < 110; k++) {
+      var qa = rnd() * Math.PI * 2, qr = Math.sqrt(rnd()) * (FIELD_R + 4), qx = Math.cos(qa) * qr, qz = Math.sin(qa) * qr;
+      m4.identity(); m4.setPosition(qx, inWater(qx, qz) || onBridge(qx, qz) ? -9 : hAt(qx, qz) + 0.1, qz); fl.setMatrixAt(k, m4);
+    }
+    scene.add(fl);
+  });
+  for (i = 0; i < 16; i++) {
+    var ma = i / 16 * Math.PI * 2 + rnd() * 0.2, mh = 12 + rnd() * 10;
+    var mt = new THREE.Mesh(new THREE.ConeGeometry(26 + rnd() * 16, mh, 6), new THREE.MeshBasicMaterial({ color: i % 2 ? 0xa9c9da : 0xb9d4e2, fog: false }));
+    mt.position.set(Math.cos(ma) * 140, mh / 2 - 1, Math.sin(ma) * 140); scene.add(mt);
+  }
+  var clouds = [];
+  for (i = 0; i < 8; i++) {
+    var cg = new THREE.Group(), ca = rnd() * Math.PI * 2, cr = 120 + rnd() * 45;
+    for (var cn = 0; cn < 4; cn++) {
+      var puff = new THREE.Mesh(new THREE.SphereGeometry(5 + rnd() * 4, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
+      puff.position.set((cn - 1.5) * 6, rnd() * 2, rnd() * 3); puff.scale.y = 0.5; cg.add(puff);
+    }
+    cg.position.set(Math.cos(ca) * cr, 20 + rnd() * 9, Math.sin(ca) * cr); scene.add(cg); clouds.push(cg);
+  }
 
   // character: pivots at hips/shoulders so limbs swing
   var hero = new THREE.Group();
   var torso = box(0.5, 0.6, 0.3, 0xf2603a); torso.position.y = 1.05; hero.add(torso);
-  var head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat(0xf3c9a5)); head.position.y = 1.6; hero.add(head);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat(0xf3c9a5)); head.position.y = 1.6; head.castShadow = true; hero.add(head);
   var cap = box(0.5, 0.1, 0.5, 0x1d2a44); cap.position.y = 1.8; hero.add(cap);
   var brim = box(0.4, 0.06, 0.25, 0x1d2a44); brim.position.set(0, 1.77, -0.33); hero.add(brim);
   function limb(x, y, len, w, c) {
@@ -353,7 +425,7 @@ body {
   var armL = limb(-0.33, 1.3, 0.55, 0.13, 0xf3c9a5), armR = limb(0.33, 1.3, 0.55, 0.13, 0xf3c9a5);
   scene.add(hero);
   var shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 20), new THREE.MeshBasicMaterial({ color: 0x1d2a44, transparent: true, opacity: 0.25 }));
-  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.04; scene.add(shadow);
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.04; shadow.visible = false; scene.add(shadow);   // replaced by real shadows
 
   function resize() {
     var w = view.clientWidth, h = view.clientHeight;
@@ -365,7 +437,7 @@ body {
 
   // ---------- game state ----------
   // h = heading in radians (0 faces "into" the screen at the start, positive = turned left); ch = camera heading, which follows h
-  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0, bearT: 0, life: LIVES, safeT: 0, hitT: -1000, kx: 0, kz: 0, cy: 0 };
+  var G = { state: 'ready', x: 0, z: 0, h: 0, ch: 0, v: 0, y: 0, vy: 0, steps: 0, time: 0, running: false, side: 1, bounce: 0, got: 0, tripT: 0, edgeT: 0, bearT: 0, life: LIVES, safeT: 0, hitT: -1000, kx: 0, kz: 0, cy: 0, mushT: 0 };
   var steer = 1;           // +1: dragging right turns left ("opposite of the kick"); -1: dragging right turns right
   try { if (localStorage.getItem('yubiwalk-steer') === 'same') steer = -1; } catch (err) {}
   var btnSteer = $('btnSteer');
@@ -390,6 +462,7 @@ body {
     G.x = 0; G.z = 0; G.h = 0; G.ch = 0; G.v = 0; G.y = 0; G.vy = 0; G.steps = 0; G.time = 0; G.running = false; G.side = 1; G.bounce = 0; G.got = 0; G.life = LIVES; G.safeT = 0; G.hitT = -1000; G.kx = 0; G.kz = 0; G.cy = 0;
     monkeys.forEach(function (m) { m.got = false; m.g.visible = true; m.x = m.hx; m.z = m.hz; m.st = 1; m.wt = 0; });
     bear.x = BEAR_START[0]; bear.z = BEAR_START[1]; bear.dir = Math.PI; bear.hop = 0; bear.stunT = 0;
+    mushrooms.forEach(function (u) { u.got = false; u.g.visible = true; });
     lastStep = { foot: '' }; downs = {}; nDown = 0; firstUpT = 0; paint();
   }
 
@@ -560,6 +633,11 @@ body {
         m.g.position.set(m.x, groundY(m.x, m.z) + (sp > 0 ? Math.abs(Math.sin(m.hop)) * 0.25 : 0), m.z);
         m.g.rotation.y = m.dir;
       });
+      mushrooms.forEach(function (u) {               // a mushroom gives one life back, but only if you are missing one
+        if (u.got || Math.hypot(u.x - G.x, u.z - G.z) > 1.1) return;
+        if (G.life < LIVES) { u.got = true; u.g.visible = false; G.life++; toast('キノコで回復！ ライフ +1'); }
+        else if (now - G.mushT > 3000) { G.mushT = now; toast('ライフは満タン'); }
+      });
       if (G.got >= monkeys.length) finish();
 
       if (G.state === 'play' && G.running) {           // the bear walks straight at you once you have started moving
@@ -621,9 +699,20 @@ body {
     var camX = G.x - cx * 4.4, camZ = G.z - cz * 4.4;
     camera.position.set(camX, Math.max(G.cy + 3.3, hAt(camX, camZ) + 1.4), camZ);   // never sink into a hill behind you
     camera.lookAt(G.x + cx * 3.5, G.cy + 0.9, G.z + cz * 3.5);
+    trees.forEach(function (t) {                       // hide any tree standing between the camera and you, so it cannot block the view
+      var sx = G.x - camX, sz = G.z - camZ, u = ((t.x - camX) * sx + (t.z - camZ) * sz) / (sx * sx + sz * sz);
+      u = Math.max(-0.4, Math.min(1, u));
+      t.g.visible = Math.hypot(t.x - (camX + sx * u), t.z - (camZ + sz * u)) > t.r + 1.3;
+    });
 
     hFlags.textContent = G.got; hTime.textContent = G.time.toFixed(2);
     hSpeed.style.width = (100 * G.v / VMAX).toFixed(1) + '%';
+
+    // the sun (and the area its shadows cover) follows you; mushrooms turn, clouds drift, water shimmers
+    sun.position.set(G.x + 10, 22, G.z + 8); sun.target.position.set(G.x, 0, G.z); sun.target.updateMatrixWorld();
+    mushrooms.forEach(function (u) { u.g.rotation.y += dt * 1.2; });
+    clouds.forEach(function (cg) { cg.position.x += dt * 0.6; if (cg.position.x > 170) cg.position.x = -170; });
+    waterMat.opacity = 0.78 + 0.05 * Math.sin(now / 700);
 
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
